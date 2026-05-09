@@ -27,33 +27,43 @@ function Write-Log {
     Add-Content -Path $log -Value $line -Encoding UTF8
 }
 
+function Send-Notify {
+    param([string]$Subject, [string]$Body, [switch]$IsError)
+    if (-not $emailAppPassword) { return }
+    $errorFlag = if ($IsError) { "--error" } else { "" }
+    $notifyArgs = @(
+        "-m", "pipeline.notifier",
+        "--subject",      $Subject,
+        "--body",         $Body,
+        "--app-password", $emailAppPassword,
+        "--log",          $log
+    )
+    if ($IsError) { $notifyArgs += "--error" }
+    Push-Location $proj
+    & $venv @notifyArgs 2>$null
+    Pop-Location
+}
+
 Write-Log "===== Avvio pipeline Promo Parity ====="
 
 # ===========================================================================
-# CONFIGURAZIONE — compila questi due campi una volta sola
+# CONFIGURAZIONE
 # ===========================================================================
 
-# ID del Google Sheet di OUTPUT (gia' configurato)
-$outputSheetsId = "1lAsH0CaoJ3Lfp8uNaJ0-Bu3wTxlO-pn186z_coInnVs"
+$outputSheetsId  = "1lAsH0CaoJ3Lfp8uNaJ0-Bu3wTxlO-pn186z_coInnVs"
+$sheetsSa        = "$env:USERPROFILE\Downloads\dogwood-sprite-400413-528afc69c595.json"
+$glovoSheetId    = "1ah5GsEJaSnv-S8jYytar3Vn9tU8MD8IITfNAWtmtveE"
+$glovoWorksheet  = "[RAW]Products"
 
-# Path al JSON del service account (gia' configurato)
-$sheetsSa = "$env:USERPROFILE\Downloads\dogwood-sprite-400413-528afc69c595.json"
-
-# ID del Google Sheet con i dati Glovo (BigQuery connector)
-# → copia l'ID dalla URL del tuo foglio Glovo:
-#   https://docs.google.com/spreadsheets/d/  <-- ID QUI -->  /edit
-$glovoSheetId = "1ah5GsEJaSnv-S8jYytar3Vn9tU8MD8IITfNAWtmtveE"
-
-# Nome del tab che contiene i dati Glovo
-# Il connettore BigQuery crea un tab con prefisso [RAW] — lo gestiamo automaticamente
-$glovoWorksheet = "[RAW]Products"
+# App Password Gmail (16 caratteri, senza spazi)
+# Ottienila da: myaccount.google.com → Sicurezza → Password per le app
+$emailAppPassword = ""   # <-- INCOLLA QUI LA APP PASSWORD
 
 # ===========================================================================
 # STEP 0 — Scarica automaticamente il CSV Glovo da Google Sheets
 # ===========================================================================
 
-# Settimana corrente (es. 2026-W20)
-$currentWeek = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
+$currentWeek  = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
 $autoGlovoCsv = "$proj\data\glovo_auto_$currentWeek.csv"
 
 if (-not $GlovoCsv) {
@@ -67,9 +77,7 @@ if (-not $GlovoCsv) {
             "--sa-json",   $sheetsSa,
             "--output",    $autoGlovoCsv
         )
-        if ($glovoWorksheet) {
-            $dlArgs += @("--worksheet", $glovoWorksheet)
-        }
+        if ($glovoWorksheet) { $dlArgs += @("--worksheet", $glovoWorksheet) }
 
         Push-Location $proj
         & $venv @dlArgs
@@ -82,13 +90,9 @@ if (-not $GlovoCsv) {
         } else {
             Write-Log "ATTENZIONE: Download automatico fallito (exit $dlExit). Cerco in Downloads..."
         }
-    } else {
-        if (-not $glovoSheetId) {
-            Write-Log "glovoSheetId non configurato in run_friday.ps1. Cerco in Downloads..."
-        }
     }
 
-    # Fallback: cerca in Downloads (come prima)
+    # Fallback: cerca in Downloads
     if (-not $GlovoCsv) {
         $downloads = "$env:USERPROFILE\Downloads"
         $candidate = Get-ChildItem $downloads -Filter "*.csv" |
@@ -98,9 +102,11 @@ if (-not $GlovoCsv) {
 
         if ($candidate) {
             $GlovoCsv = $candidate.FullName
-            Write-Log "CSV Glovo trovato in Downloads: $GlovoCsv"
+            Write-Log "CSV Glovo trovato in Downloads (fallback): $GlovoCsv"
         } else {
-            Write-Log "ERRORE: Impossibile trovare il CSV Glovo. Configura glovoSheetId oppure scaricalo manualmente in Downloads."
+            $errMsg = "Impossibile trovare il CSV Glovo. Download automatico fallito e nessun file in Downloads."
+            Write-Log "ERRORE: $errMsg"
+            Send-Notify -Subject "ERRORE pipeline $currentWeek" -Body $errMsg -IsError
             exit 1
         }
     }
@@ -115,9 +121,9 @@ if ($Week) { $args_list += @("--week", $Week) }
 
 if (Test-Path $sheetsSa) {
     $args_list += @("--sheets-id", $outputSheetsId, "--sheets-sa", $sheetsSa)
-    Write-Log "Export su Google Sheets attivo (sheet: $outputSheetsId)"
+    Write-Log "Export su Google Sheets attivo"
 } else {
-    Write-Log "ATTENZIONE: File credenziali non trovato ($sheetsSa). Export Sheets saltato."
+    Write-Log "ATTENZIONE: credenziali non trovate, export Sheets saltato."
 }
 
 Push-Location $proj
@@ -126,10 +132,26 @@ $exit1 = $LASTEXITCODE
 Pop-Location
 
 if ($exit1 -ne 0) {
-    Write-Log "ERRORE nella pipeline parity (exit code $exit1)"
+    $errMsg = "Pipeline parity terminata con errore (exit code $exit1). Controlla il log."
+    Write-Log "ERRORE: $errMsg"
+    Send-Notify -Subject "ERRORE pipeline $currentWeek" -Body $errMsg -IsError
     exit $exit1
 }
+
 Write-Log "Pipeline parity completata"
 
+# ===========================================================================
+# Notifica di successo con riepilogo
+# ===========================================================================
+$successBody = @"
+La pipeline settimanale e' terminata con successo.
+
+Settimana:  $currentWeek
+CSV Glovo:  $GlovoCsv
+Dashboard:  https://promo-parity.streamlit.app
+
+Controlla la dashboard per vedere i risultati aggiornati.
+"@
+
 Write-Log "===== Pipeline completata con successo ====="
-Write-Log "Apri il dashboard: cd '$proj' && .venv\Scripts\streamlit run app.py"
+Send-Notify -Subject "Pipeline completata $currentWeek" -Body $successBody
