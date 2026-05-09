@@ -1,0 +1,817 @@
+"""
+app.py  —  Promo Parity Dashboard
+Streamlit app per analisi settimanale Glovo vs Deliveroo.
+
+Modalita':
+  LOCALE  — legge da SQLite (data/promo_parity.db) e CSV locali
+  CLOUD   — legge da Google Sheets (configurato in .streamlit/secrets.toml)
+
+Avvio locale:
+    .venv\Scripts\streamlit run app.py
+
+Tab:
+  1. City Parity   — heatmap settimana x citta'
+  2. Store Detail  — drill-down per store
+  3. Trend         — evoluzione parity nel tempo
+  4. Store Matching — validazione match automatici
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+ROOT    = Path(__file__).resolve().parent
+DB_PATH = ROOT / "data" / "promo_parity.db"
+
+PARITY_COLORS = {
+    "SUPERIORITY": "#22c55e",
+    "PARITY":      "#f59e0b",
+    "INFERIORITY": "#ef4444",
+    "UNMATCHED":   "#94a3b8",
+}
+PARITY_ORDER = ["SUPERIORITY", "PARITY", "INFERIORITY", "UNMATCHED"]
+
+st.set_page_config(
+    page_title="Promo Parity — Glovo vs Deliveroo",
+    page_icon="📊",
+    layout="wide",
+)
+
+# ---------------------------------------------------------------------------
+# Rilevamento modalita' (locale vs cloud)
+# ---------------------------------------------------------------------------
+
+def _is_cloud_mode() -> bool:
+    """True se siamo su Streamlit Cloud (secrets configurati)."""
+    try:
+        return (
+            "gcp_service_account" in st.secrets
+            and "output_sheet_id" in st.secrets
+        )
+    except Exception:
+        return False
+
+
+def _get_service_account() -> dict:
+    return dict(st.secrets["gcp_service_account"])
+
+
+def _get_sheet_id() -> str:
+    return st.secrets["output_sheet_id"]
+
+
+# ---------------------------------------------------------------------------
+# Data loading — LOCALE (SQLite + CSV)
+# ---------------------------------------------------------------------------
+
+@st.cache_resource
+def _get_sqlite_conn():
+    if not DB_PATH.exists():
+        return None
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+
+def _local_store_parity() -> pd.DataFrame:
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    return pd.read_sql("SELECT * FROM store_parity ORDER BY week_num, city_code", conn)
+
+
+def _local_city_parity() -> pd.DataFrame:
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    return pd.read_sql("SELECT * FROM city_parity ORDER BY week_num, city_code", conn)
+
+
+def _local_review_queue() -> pd.DataFrame:
+    p = ROOT / "data" / "needs_review.csv"
+    if not p.exists():
+        return pd.DataFrame(columns=["city_code","glovo_name","glovo_store_id",
+                                     "candidate_deliveroo","score","reason"])
+    return pd.read_csv(p, dtype=str).fillna("")
+
+
+def _local_store_mapping() -> pd.DataFrame:
+    p = ROOT / "data" / "store_mapping.csv"
+    if not p.exists():
+        return pd.DataFrame()
+    return pd.read_csv(p, dtype=str).fillna("")
+
+
+def _local_unmatched() -> pd.DataFrame:
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    return pd.read_sql("""
+        SELECT city_code, glovo_name, revenue, week_num
+        FROM store_parity
+        WHERE parity = 'UNMATCHED'
+          AND week_num = (SELECT MAX(week_num) FROM store_parity)
+        ORDER BY city_code, revenue DESC
+    """, conn)
+
+
+def _local_deliveroo_names() -> dict[str, list[str]]:
+    p = ROOT / "output" / "deliveroo_promo_deduped.csv"
+    if not p.exists():
+        return {}
+    df = pd.read_csv(p, dtype=str).fillna("")
+    df.columns = [c.strip().lower() for c in df.columns]
+    return {
+        city: sorted(grp["restaurant_name"].dropna().unique().tolist())
+        for city, grp in df.groupby("city_code")
+    }
+
+
+# ---------------------------------------------------------------------------
+# Data loading — CLOUD (Google Sheets)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def _cloud_load_all() -> dict[str, pd.DataFrame]:
+    from pipeline.sheets_reader import read_all
+    return read_all(_get_sheet_id(), _get_service_account())
+
+
+def _cloud_store_parity() -> pd.DataFrame:
+    return _cloud_load_all().get("store_parity", pd.DataFrame())
+
+
+def _cloud_city_parity() -> pd.DataFrame:
+    return _cloud_load_all().get("city_parity", pd.DataFrame())
+
+
+def _cloud_review_queue() -> pd.DataFrame:
+    return _cloud_load_all().get("needs_review", pd.DataFrame())
+
+
+def _cloud_store_mapping() -> pd.DataFrame:
+    return _cloud_load_all().get("store_mapping", pd.DataFrame())
+
+
+def _cloud_unmatched() -> pd.DataFrame:
+    sp = _cloud_store_parity()
+    if sp.empty or "parity" not in sp.columns:
+        return pd.DataFrame()
+    last_week = sp["week_num"].max()
+    df = sp[(sp["parity"] == "UNMATCHED") & (sp["week_num"] == last_week)]
+    return df[["city_code","glovo_name","revenue","week_num"]].sort_values(
+        ["city_code","revenue"], ascending=[True,False]
+    )
+
+
+def _cloud_deliveroo_names() -> dict[str, list[str]]:
+    """Nel cloud usiamo i nomi Deliveroo gia' presenti nel store_parity."""
+    sp = _cloud_store_parity()
+    if sp.empty or "deliveroo_name" not in sp.columns:
+        return {}
+    result = {}
+    for city, grp in sp[sp["deliveroo_name"] != ""].groupby("city_code"):
+        result[city] = sorted(grp["deliveroo_name"].dropna().unique().tolist())
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Facade: funzioni uniformi usate dall'app
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def load_store_parity() -> pd.DataFrame:
+    return _cloud_store_parity() if _is_cloud_mode() else _local_store_parity()
+
+
+@st.cache_data(ttl=300)
+def load_city_parity() -> pd.DataFrame:
+    return _cloud_city_parity() if _is_cloud_mode() else _local_city_parity()
+
+
+@st.cache_data(ttl=300)
+def load_review_queue() -> pd.DataFrame:
+    return _cloud_review_queue() if _is_cloud_mode() else _local_review_queue()
+
+
+@st.cache_data(ttl=300)
+def load_store_mapping() -> pd.DataFrame:
+    return _cloud_store_mapping() if _is_cloud_mode() else _local_store_mapping()
+
+
+@st.cache_data(ttl=300)
+def load_unmatched_stores() -> pd.DataFrame:
+    return _cloud_unmatched() if _is_cloud_mode() else _local_unmatched()
+
+
+@st.cache_data(ttl=300)
+def load_deliveroo_names_by_city() -> dict[str, list[str]]:
+    return _cloud_deliveroo_names() if _is_cloud_mode() else _local_deliveroo_names()
+
+
+# ---------------------------------------------------------------------------
+# Scrittura mapping (funziona in entrambe le modalita')
+# ---------------------------------------------------------------------------
+
+def save_confirmed_match(city: str, glovo_name: str, deliveroo_name: str) -> None:
+    from pipeline.store_matcher import confirm_match, reject_match
+    if _is_cloud_mode():
+        from pipeline.sheets_reader import write_store_mapping
+        mapping = load_store_mapping().copy()
+        # Aggiorna o aggiunge la riga
+        mask = (mapping["city_code"] == city) & (mapping["glovo_name"] == glovo_name)
+        new_row = {"city_code": city, "glovo_name": glovo_name, "glovo_store_id": "",
+                   "deliveroo_name": deliveroo_name, "confidence": "1.0", "source": "manual_cloud"}
+        if mask.any():
+            for k, v in new_row.items():
+                mapping.loc[mask, k] = v
+        else:
+            mapping = pd.concat([mapping, pd.DataFrame([new_row])], ignore_index=True)
+        write_store_mapping(_get_sheet_id(), _get_service_account(), mapping)
+        # Rimuovi dalla review queue su Sheets
+        _remove_from_cloud_review(city, glovo_name)
+    else:
+        if deliveroo_name:
+            confirm_match(city, glovo_name, deliveroo_name)
+        else:
+            reject_match(city, glovo_name)
+
+
+def save_rejected_match(city: str, glovo_name: str) -> None:
+    save_confirmed_match(city, glovo_name, "")
+
+
+def _remove_from_cloud_review(city: str, glovo_name: str) -> None:
+    from pipeline.sheets_reader import write_needs_review
+    review = load_review_queue().copy()
+    review = review[~((review["city_code"] == city) & (review["glovo_name"] == glovo_name))]
+    write_needs_review(_get_sheet_id(), _get_service_account(), review)
+
+
+def clear_cache():
+    load_store_parity.clear()
+    load_city_parity.clear()
+    load_review_queue.clear()
+    load_store_mapping.clear()
+    load_unmatched_stores.clear()
+    load_deliveroo_names_by_city.clear()
+    if _is_cloud_mode():
+        _cloud_load_all.clear()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def parity_badge(label: str) -> str:
+    icons = {"SUPERIORITY": "🟢", "PARITY": "🟡", "INFERIORITY": "🔴", "UNMATCHED": "⚪"}
+    return f"{icons.get(label, '')} {label}"
+
+
+def metric_delta_color(val: float) -> str:
+    """Per le metric card: verde se >0, rosso se <0."""
+    return "normal" if val >= 0 else "inverse"
+
+
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+
+def sidebar() -> tuple[list[str], list[str]]:
+    st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Glovo_logo.svg/320px-Glovo_logo.svg.png",
+                     width=120)
+    st.sidebar.title("Filtri")
+
+    city_df    = load_city_parity()
+    store_df   = load_store_parity()
+
+    if city_df.empty:
+        st.sidebar.warning("Nessun dato nel DB. Esegui prima la pipeline.")
+        return [], []
+
+    all_weeks  = sorted(city_df["week_num"].unique(), reverse=True)
+    all_cities = sorted(city_df["city_code"].unique())
+
+    sel_weeks  = st.sidebar.multiselect("Settimana", all_weeks,
+                                        default=all_weeks[:1] if all_weeks else [])
+    sel_cities = st.sidebar.multiselect("Città", all_cities,
+                                        default=all_cities)
+
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 Aggiorna dati"):
+        clear_cache()
+        st.rerun()
+
+    return sel_weeks, sel_cities
+
+
+# ---------------------------------------------------------------------------
+# TAB 1 — City Parity Overview
+# ---------------------------------------------------------------------------
+
+def tab_city_parity(sel_weeks, sel_cities):
+    st.header("📊 City Parity Overview")
+    st.caption("Visione sintetica per città e settimana, pesata per fatturato Glovo")
+
+    city_df = load_city_parity()
+    if city_df.empty:
+        st.info("Nessun dato disponibile. Esegui la pipeline settimanale.")
+        return
+
+    df = city_df.copy()
+    if sel_weeks:
+        df = df[df["week_num"].isin(sel_weeks)]
+    if sel_cities:
+        df = df[df["city_code"].isin(sel_cities)]
+
+    if df.empty:
+        st.warning("Nessun dato per i filtri selezionati.")
+        return
+
+    # ---- KPI top ----
+    latest_week = df["week_num"].max()
+    dfw = df[df["week_num"] == latest_week]
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        sup_cities = (dfw["city_parity_label"] == "SUPERIORITY").sum()
+        st.metric("🟢 Città Superiority", sup_cities)
+    with col2:
+        par_cities = (dfw["city_parity_label"] == "PARITY").sum()
+        st.metric("🟡 Città Parity", par_cities)
+    with col3:
+        inf_cities = (dfw["city_parity_label"] == "INFERIORITY").sum()
+        st.metric("🔴 Città Inferiority", inf_cities)
+    with col4:
+        avg_cov = dfw["match_coverage_pct"].mean()
+        st.metric("🔗 Match coverage medio", f"{avg_cov:.1f}%")
+
+    st.divider()
+
+    # ---- Heatmap città x settimana (valore = w_superiority - w_inferiority) ----
+    st.subheader("Heatmap Parity Score (revenue-weighted)")
+    st.caption("Score = % revenue in SUPERIORITY − % revenue in INFERIORITY  |  verde = Glovo avvantaggiata")
+
+    pivot_data = df.copy()
+    pivot_data["parity_score"] = pivot_data["w_superiority"] - pivot_data["w_inferiority"]
+    pivot = pivot_data.pivot_table(
+        index="city_code", columns="week_num",
+        values="parity_score", aggfunc="mean"
+    )
+    pivot = pivot[sorted(pivot.columns, reverse=True)]
+
+    fig_heat = go.Figure(data=go.Heatmap(
+        z=pivot.values,
+        x=pivot.columns.tolist(),
+        y=pivot.index.tolist(),
+        colorscale=[[0, "#ef4444"], [0.5, "#f8fafc"], [1, "#22c55e"]],
+        zmid=0,
+        text=[[f"{v:.0f}%" for v in row] for row in pivot.values],
+        texttemplate="%{text}",
+        colorbar=dict(title="Score"),
+    ))
+    fig_heat.update_layout(height=350, margin=dict(t=20, b=20))
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+    # ---- Tabella dettaglio ----
+    st.subheader("Dettaglio per città")
+    display_cols = [
+        "city_code", "week_num", "city_parity_label",
+        "n_stores_matched", "n_superiority", "n_parity", "n_inferiority",
+        "w_superiority", "w_parity", "w_inferiority", "match_coverage_pct"
+    ]
+    disp = df[display_cols].copy()
+    disp["city_parity_label"] = disp["city_parity_label"].apply(parity_badge)
+    disp.columns = [
+        "Città", "Settimana", "Parity Label",
+        "Store matchati", "# Sup", "# Par", "# Inf",
+        "% Sup (revenue)", "% Par (revenue)", "% Inf (revenue)", "Match coverage %"
+    ]
+    st.dataframe(disp, use_container_width=True, hide_index=True)
+
+    # ---- Grouped bar per settimana ----
+    if len(sel_weeks) > 1 or len(df["week_num"].unique()) > 1:
+        st.subheader("Composizione parity per città (settimana più recente)")
+        bar_df = dfw[["city_code", "w_superiority", "w_parity", "w_inferiority"]].melt(
+            id_vars="city_code",
+            var_name="tipo",
+            value_name="pct_revenue"
+        )
+        bar_df["tipo"] = bar_df["tipo"].map({
+            "w_superiority": "SUPERIORITY",
+            "w_parity":      "PARITY",
+            "w_inferiority": "INFERIORITY",
+        })
+        fig_bar = px.bar(
+            bar_df, x="city_code", y="pct_revenue", color="tipo",
+            color_discrete_map=PARITY_COLORS,
+            category_orders={"tipo": ["SUPERIORITY", "PARITY", "INFERIORITY"]},
+            labels={"city_code": "Città", "pct_revenue": "% Revenue", "tipo": ""},
+            barmode="stack",
+        )
+        fig_bar.update_layout(height=350, margin=dict(t=20))
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# TAB 2 — Store Detail
+# ---------------------------------------------------------------------------
+
+def tab_store_detail(sel_weeks, sel_cities):
+    st.header("🏪 Store Detail")
+    st.caption("Analisi per singolo store: promo Glovo vs Deliveroo, rank e copertura")
+
+    store_df = load_store_parity()
+    if store_df.empty:
+        st.info("Nessun dato disponibile.")
+        return
+
+    df = store_df.copy()
+    if sel_cities:
+        df = df[df["city_code"].isin(sel_cities)]
+    if sel_weeks:
+        df = df[df["week_num"].isin(sel_weeks)]
+
+    if df.empty:
+        st.warning("Nessun dato per i filtri selezionati.")
+        return
+
+    # Filtri aggiuntivi
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        parity_filter = st.multiselect(
+            "Parity", PARITY_ORDER, default=PARITY_ORDER,
+            key="store_parity_filter"
+        )
+    with col2:
+        search = st.text_input("Cerca store (nome Glovo)", "")
+    with col3:
+        sort_by = st.selectbox("Ordina per", ["revenue", "parity", "glovo_rank"], index=0)
+
+    if parity_filter:
+        df = df[df["parity"].isin(parity_filter)]
+    if search:
+        df = df[df["glovo_name"].str.contains(search, case=False, na=False)]
+
+    df_sorted = df.sort_values(sort_by, ascending=(sort_by != "revenue"))
+
+    # Tabella principale
+    display_cols = [
+        "city_code", "glovo_name", "deliveroo_name", "week_num",
+        "parity",
+        "glovo_rank_label", "glovo_pct_off", "glovo_promo_products",
+        "deliveroo_rank_label", "deliveroo_promo_text",
+        "revenue", "promo_coverage_pct"
+    ]
+    available = [c for c in display_cols if c in df_sorted.columns]
+    disp = df_sorted[available].copy()
+
+    def color_parity(val):
+        colors = {
+            "SUPERIORITY": "background-color: #dcfce7",
+            "PARITY":      "background-color: #fef9c3",
+            "INFERIORITY": "background-color: #fee2e2",
+            "UNMATCHED":   "background-color: #f1f5f9",
+        }
+        return colors.get(val, "")
+
+    st.dataframe(
+        disp.style.map(color_parity, subset=["parity"]),
+        use_container_width=True,
+        hide_index=True,
+        height=500,
+    )
+    st.caption(f"Totale store visualizzati: {len(disp)}")
+
+    # ---- Drill-down su singolo store ----
+    st.divider()
+    st.subheader("Drill-down store")
+
+    store_names = sorted(df["glovo_name"].unique())
+    sel_store   = st.selectbox("Seleziona store", ["— seleziona —"] + store_names)
+
+    if sel_store != "— seleziona —":
+        store_data = store_df[store_df["glovo_name"] == sel_store].sort_values("week_num")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            latest = store_data.iloc[-1]
+            st.metric("Parity attuale", parity_badge(latest["parity"]))
+            st.metric("Glovo promo", latest.get("glovo_rank_label", "—"))
+            st.metric("Deliveroo promo", latest.get("deliveroo_rank_label", "—"))
+        with c2:
+            st.metric("Revenue settimana", f"€ {latest['revenue']:.0f}")
+            st.metric("Prodotti in promo", int(latest.get("glovo_promo_products", 0)))
+            st.metric("Copertura promo", f"{latest.get('promo_coverage_pct', 0):.1f}%")
+
+        if len(store_data) > 1:
+            fig_store = px.line(
+                store_data, x="week_num", y="glovo_rank",
+                markers=True, title="Evoluzione rank Glovo nel tempo",
+                labels={"glovo_rank": "Rank Glovo (1=migliore)", "week_num": "Settimana"},
+            )
+            fig_store.update_yaxes(autorange="reversed", dtick=1)
+            fig_store.update_layout(height=280, margin=dict(t=40))
+            st.plotly_chart(fig_store, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# TAB 3 — Trend
+# ---------------------------------------------------------------------------
+
+def tab_trend(sel_weeks, sel_cities):
+    st.header("📈 Trend Settimanale")
+    st.caption("Evoluzione della parity nel tempo (tutte le settimane disponibili)")
+
+    city_df = load_city_parity()
+    if city_df.empty:
+        st.info("Nessun dato disponibile.")
+        return
+
+    df = city_df.copy()
+    if sel_cities:
+        df = df[df["city_code"].isin(sel_cities)]
+
+    if df.empty:
+        st.warning("Nessun dato per le città selezionate.")
+        return
+
+    # Aggregato Italia: media pesata per numero store
+    agg = df.groupby("week_num").agg(
+        w_superiority=("w_superiority", "mean"),
+        w_parity=("w_parity", "mean"),
+        w_inferiority=("w_inferiority", "mean"),
+        n_stores_matched=("n_stores_matched", "sum"),
+    ).reset_index().sort_values("week_num")
+
+    # ---- Area chart Italia ----
+    st.subheader("Composizione parity Italia (tutte le città selezionate)")
+    area_df = agg.melt(
+        id_vars="week_num",
+        value_vars=["w_superiority", "w_parity", "w_inferiority"],
+        var_name="tipo", value_name="pct"
+    )
+    area_df["tipo"] = area_df["tipo"].map({
+        "w_superiority": "SUPERIORITY",
+        "w_parity":      "PARITY",
+        "w_inferiority": "INFERIORITY",
+    })
+    fig_area = px.area(
+        area_df, x="week_num", y="pct", color="tipo",
+        color_discrete_map=PARITY_COLORS,
+        category_orders={"tipo": ["SUPERIORITY", "PARITY", "INFERIORITY"]},
+        labels={"week_num": "Settimana", "pct": "% Revenue", "tipo": ""},
+    )
+    fig_area.update_layout(height=350, margin=dict(t=20))
+    st.plotly_chart(fig_area, use_container_width=True)
+
+    # ---- Line chart per città ----
+    st.subheader("Parity Score per città nel tempo")
+    st.caption("Score = % Superiority − % Inferiority (revenue-weighted)")
+
+    df["parity_score"] = df["w_superiority"] - df["w_inferiority"]
+    fig_line = px.line(
+        df.sort_values("week_num"),
+        x="week_num", y="parity_score",
+        color="city_code",
+        markers=True,
+        labels={"week_num": "Settimana", "parity_score": "Parity Score", "city_code": "Città"},
+    )
+    fig_line.add_hline(y=0, line_dash="dash", line_color="gray", annotation_text="Parità")
+    fig_line.update_layout(height=400, margin=dict(t=20))
+    st.plotly_chart(fig_line, use_container_width=True)
+
+    # ---- Tabella storica ----
+    with st.expander("Dati storici completi"):
+        st.dataframe(df.sort_values(["week_num", "city_code"]), use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# TAB 4 — Store Matching
+# ---------------------------------------------------------------------------
+
+def tab_store_matching():
+    st.header("🔗 Store Matching")
+    st.caption("Tre sezioni: candidati da confermare · matching manuale · ground truth")
+
+    review_df   = load_review_queue()
+    unmatched   = load_unmatched_stores()
+    mapping_df  = load_store_mapping()
+    deliv_names = load_deliveroo_names_by_city()
+
+    # KPI top
+    k1, k2, k3 = st.columns(3)
+    k1.metric("⏳ Da revisionare",  len(review_df))
+    k2.metric("❓ Non matchati",    len(unmatched))
+    k3.metric("✅ Ground truth",    len(mapping_df))
+    st.divider()
+
+    # =========================================================================
+    # SEZIONE 1 — Candidati fuzzy da confermare / rifiutare
+    # =========================================================================
+    with st.expander(f"⏳ Candidati automatici da revisionare  ({len(review_df)} store)", expanded=len(review_df) > 0):
+        if review_df.empty:
+            st.success("Nessun candidato in coda — tutto a posto!")
+        else:
+            # Filtro città
+            cities_r = sorted(review_df["city_code"].unique())
+            sel_city_r = st.selectbox("Città", ["Tutte"] + cities_r, key="rev_city")
+            df_r = review_df if sel_city_r == "Tutte" else review_df[review_df["city_code"] == sel_city_r]
+
+            st.dataframe(
+                df_r[["city_code","glovo_name","candidate_deliveroo","score","reason"]],
+                use_container_width=True, hide_index=True
+            )
+
+            st.markdown("**Conferma o rifiuta un candidato:**")
+            sel_idx = st.selectbox(
+                "Seleziona store",
+                options=range(len(df_r)),
+                format_func=lambda i: f"{df_r.iloc[i]['city_code']} | {df_r.iloc[i]['glovo_name']}  (score {df_r.iloc[i]['score']})",
+                key="rev_sel"
+            )
+            sel_row = df_r.iloc[sel_idx]
+
+            col_info, col_action = st.columns([2, 1])
+            with col_info:
+                st.write(f"**Glovo:** `{sel_row['glovo_name']}`")
+                st.write(f"**Candidato Deliveroo:** `{sel_row['candidate_deliveroo']}`  — score **{sel_row['score']}**")
+
+                # Dropdown con tutti i nomi Deliveroo della città per correzione rapida
+                city_options = deliv_names.get(sel_row["city_code"], [])
+                default_idx  = city_options.index(sel_row["candidate_deliveroo"]) \
+                               if sel_row["candidate_deliveroo"] in city_options else 0
+                deliv_choice = st.selectbox(
+                    "Nome Deliveroo corretto (scegli dalla lista)",
+                    options=["— Non presente su Deliveroo —"] + city_options,
+                    index=default_idx + 1 if sel_row["candidate_deliveroo"] in city_options else 0,
+                    key="rev_choice"
+                )
+
+            with col_action:
+                st.write("")
+                st.write("")
+                if st.button("✅ Conferma", type="primary", key="rev_confirm"):
+                    if deliv_choice == "— Non presente su Deliveroo —":
+                        save_rejected_match(sel_row["city_code"], sel_row["glovo_name"])
+                        st.success("Marcato come non presente su Deliveroo")
+                    else:
+                        save_confirmed_match(sel_row["city_code"], sel_row["glovo_name"], deliv_choice)
+                        st.success("Match confermato!")
+                    clear_cache(); st.rerun()
+
+                if st.button("❌ Non su Deliveroo", key="rev_reject"):
+                    save_rejected_match(sel_row["city_code"], sel_row["glovo_name"])
+                    st.success("Rifiutato")
+                    clear_cache(); st.rerun()
+
+    # =========================================================================
+    # SEZIONE 2 — Matching manuale store UNMATCHED
+    # =========================================================================
+    with st.expander(f"❓ Matching manuale store non matchati  ({len(unmatched)} store)", expanded=False):
+        if unmatched.empty:
+            st.success("Tutti gli store sono matchati!")
+        else:
+            st.caption("Questi store Glovo non hanno ancora un corrispettivo Deliveroo. "
+                       "Seleziona la città, cerca lo store, scegli il nome Deliveroo dalla lista.")
+
+            # Filtri
+            col_f1, col_f2 = st.columns([1, 2])
+            with col_f1:
+                cities_u = sorted(unmatched["city_code"].unique())
+                sel_city_u = st.selectbox("Città", cities_u, key="unm_city")
+            with col_f2:
+                search_u = st.text_input("🔍 Cerca per nome store Glovo", "", key="unm_search")
+
+            df_u = unmatched[unmatched["city_code"] == sel_city_u]
+            if search_u:
+                df_u = df_u[df_u["glovo_name"].str.contains(search_u, case=False, na=False)]
+
+            # Tabella store unmatched con revenue per prioritizzare
+            st.dataframe(
+                df_u[["glovo_name","revenue"]].rename(columns={"glovo_name":"Store Glovo","revenue":"Revenue €"}),
+                use_container_width=True, hide_index=True, height=220
+            )
+
+            st.markdown("**Assegna un match manuale:**")
+            if len(df_u) == 0:
+                st.info("Nessuno store trovato con questi filtri.")
+            else:
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    sel_glovo = st.selectbox(
+                        "Store Glovo da matchare",
+                        options=df_u["glovo_name"].tolist(),
+                        key="unm_glovo"
+                    )
+                with col_s2:
+                    city_opts  = deliv_names.get(sel_city_u, [])
+                    if city_opts:
+                        sel_deliv = st.selectbox(
+                            "Nome Deliveroo corrispondente",
+                            options=["— Non presente su Deliveroo —"] + city_opts,
+                            key="unm_deliv"
+                        )
+                    else:
+                        st.warning(f"Nessun ristorante Deliveroo scrappato per {sel_city_u}.")
+                        sel_deliv = "— Non presente su Deliveroo —"
+
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button("✅ Salva match", type="primary", key="unm_save"):
+                        if sel_deliv == "— Non presente su Deliveroo —":
+                            save_rejected_match(sel_city_u, sel_glovo)
+                            st.success(f"`{sel_glovo}` marcato come non presente su Deliveroo")
+                        else:
+                            save_confirmed_match(sel_city_u, sel_glovo, sel_deliv)
+                            st.success(f"Match salvato: `{sel_glovo}` → `{sel_deliv}`")
+                        clear_cache(); st.rerun()
+                with col_btn2:
+                    if st.button("❌ Non su Deliveroo", key="unm_reject"):
+                        save_rejected_match(sel_city_u, sel_glovo)
+                        st.success(f"`{sel_glovo}` escluso")
+                        clear_cache(); st.rerun()
+
+            st.info("💡 I match salvati qui entrano nel **ground truth** e vengono usati automaticamente dalle pipeline successive — non servono più revisioni.")
+
+    # =========================================================================
+    # SEZIONE 3 — Ground truth (mapping confermati)
+    # =========================================================================
+    with st.expander(f"✅ Ground truth — mapping confermati  ({len(mapping_df)} store)", expanded=False):
+        if mapping_df.empty:
+            st.info("Nessun mapping confermato ancora.")
+        else:
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                sources = mapping_df["source"].unique().tolist() if "source" in mapping_df.columns else []
+                sel_src = st.multiselect("Fonte", sources, default=sources, key="gt_source")
+            with col_f2:
+                search_gt = st.text_input("🔍 Cerca store", "", key="gt_search")
+
+            disp = mapping_df[mapping_df["source"].isin(sel_src)] if sel_src else mapping_df
+            if search_gt:
+                disp = disp[disp["glovo_name"].str.contains(search_gt, case=False, na=False)]
+
+            st.dataframe(disp, use_container_width=True, hide_index=True, height=350)
+            st.caption(
+                f"**{len(disp)}** visualizzati  |  "
+                f"**{(mapping_df['deliveroo_name'] != '').sum()}** con match  |  "
+                f"**{(mapping_df['deliveroo_name'] == '').sum()}** esclusi (non su Deliveroo)"
+            )
+
+        if not mapping_df.empty:
+            st.download_button(
+                "📥 Esporta store_mapping.csv",
+                data=mapping_df.to_csv(index=False).encode("utf-8"),
+                file_name="store_mapping.csv",
+                mime="text/csv",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    # Header
+    st.title("🛵 Promo Parity — Glovo vs Deliveroo")
+
+    # DB check
+    if not DB_PATH.exists():
+        st.error(
+            f"Database non trovato: `{DB_PATH}`\n\n"
+            "Esegui prima la pipeline:\n"
+            "```\n"
+            "python -m pipeline.run_weekly --glovo-csv <path_al_csv_glovo>\n"
+            "```"
+        )
+        st.stop()
+
+    sel_weeks, sel_cities = sidebar()
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 City Parity",
+        "🏪 Store Detail",
+        "📈 Trend",
+        "🔗 Store Matching",
+    ])
+
+    with tab1:
+        tab_city_parity(sel_weeks, sel_cities)
+    with tab2:
+        tab_store_detail(sel_weeks, sel_cities)
+    with tab3:
+        tab_trend(sel_weeks, sel_cities)
+    with tab4:
+        tab_store_matching()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,34 @@
+# =====================================================
+# .gitignore — Promo Parity Dashboard
+# =====================================================
+
+# Secrets — MAI caricare su GitHub
+.streamlit/secrets.toml
+*.json
+
+# Dati locali — rimangono sul PC, non su GitHub
+data/
+output/
+*.db
+*.csv
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Log
+*.log

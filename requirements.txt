@@ -1,0 +1,7 @@
+streamlit==1.57.0
+plotly==6.7.0
+pandas==3.0.2
+rapidfuzz==3.14.5
+gspread==6.2.1
+google-auth==2.49.2
+shapely==2.1.2

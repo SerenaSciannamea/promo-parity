@@ -1,0 +1,14 @@
+[theme]
+primaryColor        = "#FF6B35"   # arancione Glovo
+backgroundColor     = "#0f1117"
+secondaryBackgroundColor = "#1a1d27"
+textColor           = "#fafafa"
+font                = "sans serif"
+
+[server]
+headless            = true
+enableCORS          = false
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats    = false
