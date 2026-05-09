@@ -405,8 +405,15 @@ def metric_delta_color(val: float) -> str:
 # ---------------------------------------------------------------------------
 
 def sidebar() -> tuple[list[str], list[str]]:
-    st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Glovo_logo.svg/320px-Glovo_logo.svg.png",
-                     width=120)
+    st.sidebar.markdown(
+        """
+        <div style='background:#F2CC38;border-radius:10px;padding:10px 16px;margin-bottom:12px;text-align:center'>
+            <span style='font-size:1.6rem;font-weight:800;color:#161717;letter-spacing:1px'>🛵 Promo Parity</span><br>
+            <span style='font-size:0.75rem;color:#161717;opacity:0.7'>Glovo vs Deliveroo</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.sidebar.title("Filtri")
 
     city_df    = load_city_parity()
