@@ -47,6 +47,35 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# Password protection
+# ---------------------------------------------------------------------------
+
+def check_password() -> bool:
+    """Mostra la schermata di login. Restituisce True se autenticato."""
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.markdown("""
+        <div style='display:flex;flex-direction:column;align-items:center;
+                    justify-content:center;padding:80px 0 40px'>
+            <h1 style='font-size:2.2rem;margin-bottom:4px'>🛵 Promo Parity</h1>
+            <p style='color:#94a3b8;margin-bottom:40px'>Glovo vs Deliveroo</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    col = st.columns([1, 2, 1])[1]
+    with col:
+        pwd = st.text_input("Password", type="password", placeholder="Inserisci la password")
+        if st.button("Accedi", use_container_width=True, type="primary"):
+            correct = st.secrets.get("app_password", "")
+            if pwd == correct:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Password errata")
+    return False
+
+# ---------------------------------------------------------------------------
 # Rilevamento modalita' (locale vs cloud)
 # ---------------------------------------------------------------------------
 
@@ -780,6 +809,9 @@ def tab_store_matching():
 # ---------------------------------------------------------------------------
 
 def main():
+    if not check_password():
+        st.stop()
+
     # Header
     st.title("🛵 Promo Parity — Glovo vs Deliveroo")
 
