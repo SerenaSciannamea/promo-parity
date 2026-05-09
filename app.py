@@ -444,7 +444,13 @@ def sidebar() -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 
 def tab_city_parity(sel_weeks, sel_cities):
-    st.header("📊 City Parity Overview")
+    _icon = ROOT / "assets" / "promoZone.png"
+    col_icon, col_title = st.columns([0.07, 0.93])
+    with col_icon:
+        if _icon.exists():
+            st.image(str(_icon), width=48)
+    with col_title:
+        st.markdown("<h2 style='margin-top:6px;margin-bottom:0'>City Parity Overview</h2>", unsafe_allow_html=True)
     st.caption("Visione sintetica per città e settimana, pesata per fatturato Glovo")
 
     city_df = load_city_parity()
