@@ -42,8 +42,9 @@ from pipeline.parity_calculator import compute_store_parity, compute_city_parity
 # ---------------------------------------------------------------------------
 # Percorsi default
 # ---------------------------------------------------------------------------
-DELIVEROO_DEDUPED = ROOT / "output" / "deliveroo_promo_deduped.csv"
-STORES_CSV        = ROOT / "Stores.csv"
+DELIVEROO_DEDUPED   = ROOT / "output" / "deliveroo_promo_deduped.csv"
+DELIVEROO_PRODUCTS  = ROOT / "output" / "deliveroo_promo_products.csv"
+STORES_CSV          = ROOT / "Stores.csv"
 DB_PATH           = ROOT / "data" / "promo_parity.db"
 WEEKLY_DIR        = ROOT / "data" / "weekly"
 
@@ -289,8 +290,15 @@ def run_pipeline(
             from pipeline.store_matcher import load_mapping, load_review_queue
             mapping_df = load_mapping()
             review_df  = load_review_queue()
-            # Carica prodotti Deliveroo
-            deliveroo_products = deliveroo_df.copy() if not deliveroo_df.empty else None
+            # Carica prodotti Deliveroo dal file raw (product-level, non deduped)
+            if DELIVEROO_PRODUCTS.exists():
+                dp_cols = ["city_code", "restaurant_name", "product_name",
+                           "product_description", "product_price", "promotion_type"]
+                deliveroo_products_raw = pd.read_csv(DELIVEROO_PRODUCTS, dtype=str).fillna("")
+                dp_cols_present = [c for c in dp_cols if c in deliveroo_products_raw.columns]
+                deliveroo_products = deliveroo_products_raw[dp_cols_present] if dp_cols_present else None
+            else:
+                deliveroo_products = None
             export_to_sheets(
                 spreadsheet_id       = sheets_id,
                 service_account_info = sheets_sa,
