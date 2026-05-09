@@ -7,6 +7,7 @@ Funziona sia con credenziali da file (locale) che da st.secrets (Streamlit Cloud
 
 from __future__ import annotations
 
+import datetime
 import json
 from pathlib import Path
 
@@ -24,10 +25,16 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-TAB_STORE_PARITY  = "store_parity"
-TAB_CITY_PARITY   = "city_parity"
-TAB_STORE_MAPPING = "store_mapping"
-TAB_NEEDS_REVIEW  = "needs_review"
+TAB_STORE_PARITY   = "store_parity"
+TAB_CITY_PARITY    = "city_parity"
+TAB_STORE_MAPPING  = "store_mapping"
+TAB_NEEDS_REVIEW   = "needs_review"
+TAB_MANUAL_MATCHES = "manual_matches"   # append-only, scritto dall'UI
+
+MANUAL_COLS = [
+    "city_code", "glovo_name", "glovo_store_id",
+    "deliveroo_name", "confidence", "source", "updated_at",
+]
 
 
 def _get_client(service_account_info: dict | str | Path) -> "gspread.Client":
@@ -52,20 +59,67 @@ def _read_tab(sheet: "gspread.Spreadsheet", tab_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _get_or_create_manual_ws(sheet: "gspread.Spreadsheet") -> "gspread.Worksheet":
+    """Restituisce il tab manual_matches, creandolo con l'header se necessario."""
+    try:
+        ws = sheet.worksheet(TAB_MANUAL_MATCHES)
+        # Controlla che abbia almeno l'header
+        try:
+            first_row = ws.row_values(1)
+            if not first_row:
+                ws.append_row(MANUAL_COLS)
+        except Exception:
+            ws.append_row(MANUAL_COLS)
+        return ws
+    except Exception:
+        # Tab non esiste: crealo
+        ws = sheet.add_worksheet(TAB_MANUAL_MATCHES, rows=2000, cols=len(MANUAL_COLS))
+        ws.append_row(MANUAL_COLS)
+        return ws
+
+
+def append_manual_match(
+    spreadsheet_id: str,
+    service_account_info: dict | str | Path,
+    row: dict,
+) -> None:
+    """
+    Appende UNA sola riga al tab manual_matches (append, mai riscrittura).
+    Velocissimo: un solo API call di scrittura.
+
+    row deve contenere almeno: city_code, glovo_name, deliveroo_name
+    deliveroo_name = "" significa "non presente su Deliveroo"
+    """
+    client = _get_client(service_account_info)
+    sheet  = client.open_by_key(spreadsheet_id)
+    ws     = _get_or_create_manual_ws(sheet)
+
+    values = [
+        row.get("city_code", ""),
+        row.get("glovo_name", ""),
+        row.get("glovo_store_id", ""),
+        row.get("deliveroo_name", ""),
+        str(row.get("confidence", "1.0")),
+        row.get("source", "manual_cloud"),
+        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    ]
+    ws.append_row(values, value_input_option="RAW")
+
+
 def read_all(
     spreadsheet_id: str,
     service_account_info: dict | str | Path,
 ) -> dict[str, pd.DataFrame]:
     """
-    Legge tutti i tab dal Google Sheet di output.
+    Legge tutti i tab dal Google Sheet di output e applica i match manuali.
 
     Returns
     -------
     {
       "store_parity" : DataFrame,
       "city_parity"  : DataFrame,
-      "store_mapping": DataFrame,
-      "needs_review" : DataFrame,
+      "store_mapping": DataFrame,   # gia' con override da manual_matches
+      "needs_review" : DataFrame,   # gia' filtrato (rimossi i gia'-confermati)
     }
     """
     client = _get_client(service_account_info)
@@ -75,8 +129,43 @@ def read_all(
     city_parity   = _read_tab(sheet, TAB_CITY_PARITY)
     store_mapping = _read_tab(sheet, TAB_STORE_MAPPING)
     needs_review  = _read_tab(sheet, TAB_NEEDS_REVIEW)
+    manual_matches = _read_tab(sheet, TAB_MANUAL_MATCHES)
 
+    # -------------------------------------------------------------------------
+    # Merge manual_matches → store_mapping
+    # I match manuali hanno priorita'; prendiamo l'ultimo per ogni (city, glovo)
+    # -------------------------------------------------------------------------
+    if not manual_matches.empty and "city_code" in manual_matches.columns:
+        # Prendi l'ultimo record per coppia (city_code, glovo_name)
+        mm = manual_matches.copy()
+        mm = mm.drop_duplicates(subset=["city_code", "glovo_name"], keep="last")
+        mm = mm[["city_code", "glovo_name", "glovo_store_id",
+                 "deliveroo_name", "confidence", "source"]]
+
+        if not store_mapping.empty and "city_code" in store_mapping.columns:
+            # Rimuovi righe che verranno sovrascritte
+            key_set = set(zip(mm["city_code"], mm["glovo_name"]))
+            mask = [
+                (r["city_code"], r["glovo_name"]) not in key_set
+                for _, r in store_mapping.iterrows()
+            ]
+            store_mapping = store_mapping[mask]
+            store_mapping = pd.concat([store_mapping, mm], ignore_index=True)
+        else:
+            store_mapping = mm
+
+        # Rimuovi da needs_review le coppie gia' risolte manualmente
+        if not needs_review.empty and "city_code" in needs_review.columns:
+            resolved = set(zip(mm["city_code"], mm["glovo_name"]))
+            mask_nr = [
+                (r["city_code"], r["glovo_name"]) not in resolved
+                for _, r in needs_review.iterrows()
+            ]
+            needs_review = needs_review[mask_nr]
+
+    # -------------------------------------------------------------------------
     # Cast numerici
+    # -------------------------------------------------------------------------
     for df, num_cols in [
         (store_parity,  ["glovo_rank", "deliveroo_rank", "glovo_pct_off",
                          "glovo_promo_products", "revenue", "promo_coverage_pct"]),
@@ -105,7 +194,7 @@ def write_store_mapping(
 ) -> None:
     """
     Aggiorna il tab store_mapping su Google Sheets.
-    Usato dal dashboard cloud quando un utente conferma/rifiuta un match.
+    Usato dal pipeline settimanale (non dall'UI cloud — usa append_manual_match).
     """
     from pipeline.sheets_writer import _get_client as _wc, _get_or_create_worksheet, _upsert_sheet
     client = _wc(service_account_info)

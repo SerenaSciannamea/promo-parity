@@ -252,17 +252,20 @@ def load_deliveroo_names_by_city() -> dict[str, list[str]]:
 def save_confirmed_match(city: str, glovo_name: str, deliveroo_name: str) -> None:
     from pipeline.store_matcher import confirm_match, reject_match
     if _is_cloud_mode():
-        from pipeline.sheets_reader import write_store_mapping
-        mapping = load_store_mapping().copy()
-        new_row = {"city_code": city, "glovo_name": glovo_name, "glovo_store_id": "",
-                   "deliveroo_name": deliveroo_name, "confidence": "1.0", "source": "manual_cloud"}
-        # Rimuovi riga esistente (se presente) e aggiungi quella aggiornata
-        mask = (mapping["city_code"] == city) & (mapping["glovo_name"] == glovo_name)
-        mapping = mapping[~mask]
-        mapping = pd.concat([mapping, pd.DataFrame([new_row])], ignore_index=True)
-        write_store_mapping(_get_sheet_id(), _get_service_account(), mapping)
-        # Rimuovi dalla review queue su Sheets
-        _remove_from_cloud_review(city, glovo_name)
+        # Append-only: un solo API call, quasi istantaneo
+        from pipeline.sheets_reader import append_manual_match
+        append_manual_match(
+            _get_sheet_id(),
+            _get_service_account(),
+            {
+                "city_code":      city,
+                "glovo_name":     glovo_name,
+                "glovo_store_id": "",
+                "deliveroo_name": deliveroo_name,
+                "confidence":     "1.0",
+                "source":         "manual_cloud",
+            },
+        )
     else:
         if deliveroo_name:
             confirm_match(city, glovo_name, deliveroo_name)
@@ -284,13 +287,6 @@ def _run_save(action_fn, *args, success_msg: str) -> None:
     except Exception as e:
         st.session_state["last_save_msg"] = ("err", str(e))
     st.rerun()
-
-
-def _remove_from_cloud_review(city: str, glovo_name: str) -> None:
-    from pipeline.sheets_reader import write_needs_review
-    review = load_review_queue().copy()
-    review = review[~((review["city_code"] == city) & (review["glovo_name"] == glovo_name))]
-    write_needs_review(_get_sheet_id(), _get_service_account(), review)
 
 
 def clear_cache():
