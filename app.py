@@ -528,6 +528,11 @@ def tab_city_parity(sel_weeks, sel_cities):
     ]
     disp = df[display_cols].copy()
     disp["city_parity_label"] = disp["city_parity_label"].apply(parity_badge)
+    # Formatta le colonne % con 1 decimale e simbolo %
+    for col in ["w_superiority", "w_parity", "w_inferiority", "match_coverage_pct"]:
+        if col in disp.columns:
+            disp[col] = pd.to_numeric(disp[col], errors="coerce") \
+                .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
     disp.columns = [
         "Città", "Settimana", "Parity Label",
         "Store matchati", "# Sup", "# Par", "# Inf",
