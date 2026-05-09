@@ -3,7 +3,7 @@
 # Pipeline settimanale Promo Parity  —  eseguito ogni venerdi' sera
 #
 # Parametri opzionali:
-#   -GlovoCsv   <path>   CSV Glovo (default: ultima versione in Downloads)
+#   -GlovoCsv   <path>   CSV Glovo (se vuoto: scarica automaticamente da Sheets)
 #   -Week       <str>    Settimana (es. 2026-W20). Default: settimana corrente
 # ===========================================================================
 param(
@@ -29,36 +29,93 @@ function Write-Log {
 
 Write-Log "===== Avvio pipeline Promo Parity ====="
 
-# ---------- Trova il CSV Glovo piu' recente in Downloads ----------
-if (-not $GlovoCsv) {
-    $downloads = "$env:USERPROFILE\Downloads"
-    $candidate = Get-ChildItem $downloads -Filter "*.csv" |
-                 Where-Object { $_.Name -like "*Prio*" -or $_.Name -like "*glovo*" -or $_.Name -like "*Products*" } |
-                 Sort-Object LastWriteTime -Descending |
-                 Select-Object -First 1
+# ===========================================================================
+# CONFIGURAZIONE — compila questi due campi una volta sola
+# ===========================================================================
 
-    if ($candidate) {
-        $GlovoCsv = $candidate.FullName
-        Write-Log "CSV Glovo trovato automaticamente: $GlovoCsv"
+# ID del Google Sheet di OUTPUT (gia' configurato)
+$outputSheetsId = "1lAsH0CaoJ3Lfp8uNaJ0-Bu3wTxlO-pn186z_coInnVs"
+
+# Path al JSON del service account (gia' configurato)
+$sheetsSa = "$env:USERPROFILE\Downloads\dogwood-sprite-400413-528afc69c595.json"
+
+# ID del Google Sheet con i dati Glovo (BigQuery connector)
+# → copia l'ID dalla URL del tuo foglio Glovo:
+#   https://docs.google.com/spreadsheets/d/  <-- ID QUI -->  /edit
+$glovoSheetId = ""   # <-- INCOLLA QUI L'ID DEL FOGLIO GLOVO
+
+# Nome del tab che contiene i dati Glovo (es. "Products", "Sheet1", ecc.)
+# Lascia vuoto per usare il primo tab del foglio
+$glovoWorksheet = ""
+
+# ===========================================================================
+# STEP 0 — Scarica automaticamente il CSV Glovo da Google Sheets
+# ===========================================================================
+
+# Settimana corrente (es. 2026-W20)
+$currentWeek = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
+$autoGlovoCsv = "$proj\data\glovo_auto_$currentWeek.csv"
+
+if (-not $GlovoCsv) {
+
+    if ($glovoSheetId -and (Test-Path $sheetsSa)) {
+        Write-Log "Step 0: Download automatico CSV Glovo da Google Sheets..."
+
+        $dlArgs = @(
+            "-m", "pipeline.glovo_downloader",
+            "--sheet-id",  $glovoSheetId,
+            "--sa-json",   $sheetsSa,
+            "--output",    $autoGlovoCsv
+        )
+        if ($glovoWorksheet) {
+            $dlArgs += @("--worksheet", $glovoWorksheet)
+        }
+
+        Push-Location $proj
+        & $venv @dlArgs
+        $dlExit = $LASTEXITCODE
+        Pop-Location
+
+        if ($dlExit -eq 0 -and (Test-Path $autoGlovoCsv)) {
+            $GlovoCsv = $autoGlovoCsv
+            Write-Log "CSV Glovo scaricato automaticamente: $GlovoCsv"
+        } else {
+            Write-Log "ATTENZIONE: Download automatico fallito (exit $dlExit). Cerco in Downloads..."
+        }
     } else {
-        Write-Log "ERRORE: Nessun CSV Glovo trovato in Downloads. Specificare -GlovoCsv <path>"
-        exit 1
+        if (-not $glovoSheetId) {
+            Write-Log "glovoSheetId non configurato in run_friday.ps1. Cerco in Downloads..."
+        }
+    }
+
+    # Fallback: cerca in Downloads (come prima)
+    if (-not $GlovoCsv) {
+        $downloads = "$env:USERPROFILE\Downloads"
+        $candidate = Get-ChildItem $downloads -Filter "*.csv" |
+                     Where-Object { $_.Name -like "*Prio*" -or $_.Name -like "*glovo*" -or $_.Name -like "*Products*" } |
+                     Sort-Object LastWriteTime -Descending |
+                     Select-Object -First 1
+
+        if ($candidate) {
+            $GlovoCsv = $candidate.FullName
+            Write-Log "CSV Glovo trovato in Downloads: $GlovoCsv"
+        } else {
+            Write-Log "ERRORE: Impossibile trovare il CSV Glovo. Configura glovoSheetId oppure scaricalo manualmente in Downloads."
+            exit 1
+        }
     }
 }
 
-# ---------- Configurazione Google Sheets (export cloud) ----------
-$sheetsId = "1lAsH0CaoJ3Lfp8uNaJ0-Bu3wTxlO-pn186z_coInnVs"
-$sheetsSa = "$env:USERPROFILE\Downloads\dogwood-sprite-400413-528afc69c595.json"
-
-# ---------- Step 1: Pipeline parity ----------
-Write-Log "Step 1: Pipeline parity Glovo vs Deliveroo"
+# ===========================================================================
+# STEP 1 — Pipeline parity
+# ===========================================================================
+Write-Log "Step 1: Pipeline parity Glovo vs Deliveroo (CSV: $GlovoCsv)"
 $args_list = @("-m", "pipeline.run_weekly", "--glovo-csv", $GlovoCsv)
 if ($Week) { $args_list += @("--week", $Week) }
 
-# Export su Google Sheets solo se il file credenziali esiste
 if (Test-Path $sheetsSa) {
-    $args_list += @("--sheets-id", $sheetsId, "--sheets-sa", $sheetsSa)
-    Write-Log "Export su Google Sheets attivo (sheet: $sheetsId)"
+    $args_list += @("--sheets-id", $outputSheetsId, "--sheets-sa", $sheetsSa)
+    Write-Log "Export su Google Sheets attivo (sheet: $outputSheetsId)"
 } else {
     Write-Log "ATTENZIONE: File credenziali non trovato ($sheetsSa). Export Sheets saltato."
 }
@@ -73,11 +130,6 @@ if ($exit1 -ne 0) {
     exit $exit1
 }
 Write-Log "Pipeline parity completata"
-
-# ---------- Step 2: Scraper Deliveroo (opzionale — decommentare se vuoi eseguirlo) ----------
-# Write-Log "Step 2: Scraper Deliveroo"
-# & "$proj\run_scrape.ps1"
-# Write-Log "Scraper Deliveroo completato"
 
 Write-Log "===== Pipeline completata con successo ====="
 Write-Log "Apri il dashboard: cd '$proj' && .venv\Scripts\streamlit run app.py"
