@@ -1144,6 +1144,21 @@ def main():
     _b64_trend   = _icon_b64("growth.png")
     _b64_matching = _icon_b64("twoBagsYellowCheck.png")
 
+    _css_tabs = """<style>
+    /* Multiselect tags → teal Glovo */
+    span[data-baseweb="tag"] {
+        background-color: #00A082 !important;
+        color: white !important;
+    }
+    span[data-baseweb="tag"] span {
+        color: white !important;
+    }
+    /* X button del tag */
+    span[data-baseweb="tag"] [role="presentation"] svg {
+        fill: white !important;
+    }
+    </style>"""
+    st.markdown(_css_tabs, unsafe_allow_html=True)
     _css_tabs = "<style>"
     if _b64_promo:
         _css_tabs += f"""
