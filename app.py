@@ -678,22 +678,34 @@ def tab_store_matching():
                 default_idx  = city_options.index(sel_row["candidate_deliveroo"]) \
                                if sel_row["candidate_deliveroo"] in city_options else 0
                 deliv_choice = st.selectbox(
-                    "Nome Deliveroo corretto (scegli dalla lista)",
-                    options=["— Non presente su Deliveroo —"] + city_options,
+                    "Scegli dalla lista scrappata",
+                    options=["— Non in lista (scrivi sotto) —"] + city_options,
                     index=default_idx + 1 if sel_row["candidate_deliveroo"] in city_options else 0,
                     key="rev_choice"
                 )
+                # Campo libero per nomi non in lista (store senza promo attiva)
+                custom_name = st.text_input(
+                    "Oppure scrivi il nome Deliveroo manualmente",
+                    placeholder="Es: Pizzeria da Paolo  (lascia vuoto se usi la lista sopra)",
+                    key="rev_custom"
+                )
+                st.caption("💡 Usa il testo libero se lo store è su Deliveroo ma non ha promo attive e quindi non compare nella lista scrappata. Verrà registrato con **nessuna promozione** per questa settimana.")
 
             with col_action:
                 st.write("")
                 st.write("")
+                # Determina il nome finale: testo libero ha priorità sul dropdown
+                final_choice = custom_name.strip() if custom_name.strip() else (
+                    "" if deliv_choice == "— Non in lista (scrivi sotto) —" else deliv_choice
+                )
                 if st.button("✅ Conferma", type="primary", key="rev_confirm"):
-                    if deliv_choice == "— Non presente su Deliveroo —":
+                    if not final_choice:
                         save_rejected_match(sel_row["city_code"], sel_row["glovo_name"])
                         st.success("Marcato come non presente su Deliveroo")
                     else:
-                        save_confirmed_match(sel_row["city_code"], sel_row["glovo_name"], deliv_choice)
-                        st.success("Match confermato!")
+                        save_confirmed_match(sel_row["city_code"], sel_row["glovo_name"], final_choice)
+                        label = "(nessuna promo attiva)" if custom_name.strip() else ""
+                        st.success(f"Match confermato! {label}")
                     clear_cache(); st.rerun()
 
                 if st.button("❌ Non su Deliveroo", key="rev_reject"):
@@ -741,26 +753,38 @@ def tab_store_matching():
                         key="unm_glovo"
                     )
                 with col_s2:
-                    city_opts  = deliv_names.get(sel_city_u, [])
-                    if city_opts:
-                        sel_deliv = st.selectbox(
-                            "Nome Deliveroo corrispondente",
-                            options=["— Non presente su Deliveroo —"] + city_opts,
-                            key="unm_deliv"
-                        )
-                    else:
-                        st.warning(f"Nessun ristorante Deliveroo scrappato per {sel_city_u}.")
-                        sel_deliv = "— Non presente su Deliveroo —"
+                    city_opts = deliv_names.get(sel_city_u, [])
+                    sel_deliv = st.selectbox(
+                        "Scegli dalla lista scrappata",
+                        options=["— Non in lista (scrivi sotto) —"] + city_opts,
+                        key="unm_deliv"
+                    )
+                    if not city_opts:
+                        st.caption(f"⚠️ Nessun ristorante scrappato per {sel_city_u} — usa il campo testo.")
+
+                # Campo testo libero sotto i due selectbox
+                custom_deliv = st.text_input(
+                    "Oppure scrivi il nome Deliveroo manualmente",
+                    placeholder="Es: Pizzeria da Paolo  (lascia vuoto se usi la lista sopra)",
+                    key="unm_custom"
+                )
+                st.caption("💡 Usa il testo libero se lo store è su Deliveroo ma non ha promo attive questa settimana. Verrà registrato con **nessuna promozione** nel calcolo di parity.")
+
+                # Nome finale: testo libero ha priorità
+                final_deliv = custom_deliv.strip() if custom_deliv.strip() else (
+                    "" if sel_deliv == "— Non in lista (scrivi sotto) —" else sel_deliv
+                )
 
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
                     if st.button("✅ Salva match", type="primary", key="unm_save"):
-                        if sel_deliv == "— Non presente su Deliveroo —":
+                        if not final_deliv:
                             save_rejected_match(sel_city_u, sel_glovo)
                             st.success(f"`{sel_glovo}` marcato come non presente su Deliveroo")
                         else:
-                            save_confirmed_match(sel_city_u, sel_glovo, sel_deliv)
-                            st.success(f"Match salvato: `{sel_glovo}` → `{sel_deliv}`")
+                            save_confirmed_match(sel_city_u, sel_glovo, final_deliv)
+                            label = "(nessuna promo attiva)" if custom_deliv.strip() else ""
+                            st.success(f"Match salvato: `{sel_glovo}` → `{final_deliv}` {label}")
                         clear_cache(); st.rerun()
                 with col_btn2:
                     if st.button("❌ Non su Deliveroo", key="unm_reject"):
