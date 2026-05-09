@@ -697,9 +697,26 @@ def tab_store_detail(sel_weeks, sel_cities):
 
         col_g, col_d = st.columns(2)
 
+        # Badge loghi Glovo / Deliveroo
+        _glovo_logo  = ROOT / "assets" / "glovo.png"
+        _roo_logo    = ROOT / "assets" / "roo.png"
+        import base64 as _b64prod
+        _b64_glovo = _b64prod.b64encode(_glovo_logo.read_bytes()).decode() if _glovo_logo.exists() else ""
+        _b64_roo   = _b64prod.b64encode(_roo_logo.read_bytes()).decode()   if _roo_logo.exists()   else ""
+
         # ---- Glovo ----
         with col_g:
-            st.markdown("<span style='background:#F2CC38;color:#161717;padding:4px 12px;border-radius:6px;font-weight:700'>🛵 Glovo</span>", unsafe_allow_html=True)
+            if _b64_glovo:
+                st.markdown(
+                    f"<div style='display:inline-flex;align-items:center;gap:8px;"
+                    f"background:#F2CC38;color:#161717;padding:5px 14px;"
+                    f"border-radius:8px;font-weight:700;font-size:1rem'>"
+                    f"<img src='data:image/png;base64,{_b64_glovo}' style='height:22px;width:22px;object-fit:contain'>"
+                    f"Glovo</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown("<span style='background:#F2CC38;color:#161717;padding:4px 12px;border-radius:6px;font-weight:700'>🛵 Glovo</span>", unsafe_allow_html=True)
             st.write("")
             if gp.empty:
                 st.info("Dati prodotti Glovo non ancora disponibili.\nVerranno caricati al prossimo run della pipeline.")
@@ -741,7 +758,17 @@ def tab_store_detail(sel_weeks, sel_cities):
 
         # ---- Deliveroo ----
         with col_d:
-            st.markdown("<span style='background:#00A082;color:white;padding:4px 12px;border-radius:6px;font-weight:700'>🛒 Deliveroo</span>", unsafe_allow_html=True)
+            if _b64_roo:
+                st.markdown(
+                    f"<div style='display:inline-flex;align-items:center;gap:8px;"
+                    f"background:#00CCBC;color:white;padding:5px 14px;"
+                    f"border-radius:8px;font-weight:700;font-size:1rem'>"
+                    f"<img src='data:image/png;base64,{_b64_roo}' style='height:22px;width:22px;object-fit:contain'>"
+                    f"Deliveroo</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown("<span style='background:#00A082;color:white;padding:4px 12px;border-radius:6px;font-weight:700'>🛒 Deliveroo</span>", unsafe_allow_html=True)
             st.write("")
             if not deliveroo_nm:
                 st.info("Store non matchato con Deliveroo.\nAssegna un match nel tab Store Matching.")
