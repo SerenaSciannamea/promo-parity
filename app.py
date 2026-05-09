@@ -194,7 +194,24 @@ def _cloud_unmatched() -> pd.DataFrame:
     if sp.empty or "parity" not in sp.columns:
         return pd.DataFrame()
     last_week = sp["week_num"].max()
-    df = sp[(sp["parity"] == "UNMATCHED") & (sp["week_num"] == last_week)]
+    df = sp[(sp["parity"] == "UNMATCHED") & (sp["week_num"] == last_week)].copy()
+
+    # Escludi store che hanno gia' un match in store_mapping
+    # (include i match manuali aggiunti tramite manual_matches)
+    mapping = _cloud_load_all().get("store_mapping", pd.DataFrame())
+    if not mapping.empty and "deliveroo_name" in mapping.columns:
+        matched_pairs = set(
+            zip(
+                mapping.loc[mapping["deliveroo_name"] != "", "city_code"],
+                mapping.loc[mapping["deliveroo_name"] != "", "glovo_name"],
+            )
+        )
+        if matched_pairs:
+            df = df[~df.apply(
+                lambda r: (r["city_code"], r["glovo_name"]) in matched_pairs,
+                axis=1,
+            )]
+
     return df[["city_code","glovo_name","revenue","week_num"]].sort_values(
         ["city_code","revenue"], ascending=[True,False]
     )
