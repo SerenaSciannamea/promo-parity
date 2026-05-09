@@ -274,6 +274,18 @@ def save_rejected_match(city: str, glovo_name: str) -> None:
     save_confirmed_match(city, glovo_name, "")
 
 
+def _run_save(action_fn, *args, success_msg: str) -> None:
+    """Esegue un'azione di salvataggio con spinner, feedback e gestione errori."""
+    try:
+        with st.spinner("Salvataggio in corso..."):
+            action_fn(*args)
+        clear_cache()
+        st.session_state["last_save_msg"] = ("ok", success_msg)
+    except Exception as e:
+        st.session_state["last_save_msg"] = ("err", str(e))
+    st.rerun()
+
+
 def _remove_from_cloud_review(city: str, glovo_name: str) -> None:
     from pipeline.sheets_reader import write_needs_review
     review = load_review_queue().copy()
@@ -627,6 +639,14 @@ def tab_store_matching():
     st.header("🔗 Store Matching")
     st.caption("Tre sezioni: candidati da confermare · matching manuale · ground truth")
 
+    # Mostra feedback dell'ultima operazione di salvataggio
+    if "last_save_msg" in st.session_state:
+        kind, msg = st.session_state.pop("last_save_msg")
+        if kind == "ok":
+            st.success(f"✅ {msg}")
+        else:
+            st.error(f"❌ Errore durante il salvataggio: {msg}")
+
     review_df   = load_review_queue()
     unmatched   = load_unmatched_stores()
     mapping_df  = load_store_mapping()
@@ -697,18 +717,16 @@ def tab_store_matching():
                 )
                 if st.button("✅ Conferma", type="primary", key="rev_confirm"):
                     if not final_choice:
-                        save_rejected_match(sel_row["city_code"], sel_row["glovo_name"])
-                        st.success("Marcato come non presente su Deliveroo")
+                        _run_save(save_rejected_match, sel_row["city_code"], sel_row["glovo_name"],
+                                  success_msg="Marcato come non presente su Deliveroo")
                     else:
-                        save_confirmed_match(sel_row["city_code"], sel_row["glovo_name"], final_choice)
-                        label = "(nessuna promo attiva)" if custom_name.strip() else ""
-                        st.success(f"Match confermato! {label}")
-                    clear_cache(); st.rerun()
+                        label = " (nessuna promo attiva)" if custom_name.strip() else ""
+                        _run_save(save_confirmed_match, sel_row["city_code"], sel_row["glovo_name"], final_choice,
+                                  success_msg=f"Match confermato: {sel_row['glovo_name']} → {final_choice}{label}")
 
                 if st.button("❌ Non su Deliveroo", key="rev_reject"):
-                    save_rejected_match(sel_row["city_code"], sel_row["glovo_name"])
-                    st.success("Rifiutato")
-                    clear_cache(); st.rerun()
+                    _run_save(save_rejected_match, sel_row["city_code"], sel_row["glovo_name"],
+                              success_msg=f"{sel_row['glovo_name']} escluso (non su Deliveroo)")
 
     # =========================================================================
     # SEZIONE 2 — Matching manuale store UNMATCHED
@@ -776,17 +794,16 @@ def tab_store_matching():
                 with col_btn1:
                     if st.button("✅ Salva match", type="primary", key="unm_save"):
                         if not final_deliv:
-                            save_rejected_match(sel_city_u, sel_glovo)
-                            st.success(f"`{sel_glovo}` marcato come non presente su Deliveroo")
+                            _run_save(save_rejected_match, sel_city_u, sel_glovo,
+                                      success_msg=f"{sel_glovo} marcato come non presente su Deliveroo")
                         else:
-                            save_confirmed_match(sel_city_u, sel_glovo, final_deliv)
-                            label = "(nessuna promo attiva)" if custom_deliv.strip() else ""
-                            st.success(f"Match salvato: `{sel_glovo}` → `{final_deliv}` {label}")
-                        clear_cache(); st.rerun()
+                            label = " (nessuna promo attiva)" if custom_deliv.strip() else ""
+                            _run_save(save_confirmed_match, sel_city_u, sel_glovo, final_deliv,
+                                      success_msg=f"Match salvato: {sel_glovo} → {final_deliv}{label}")
                 with col_btn2:
                     if st.button("❌ Non su Deliveroo", key="unm_reject"):
-                        save_rejected_match(sel_city_u, sel_glovo)
-                        st.success(f"`{sel_glovo}` escluso")
+                        _run_save(save_rejected_match, sel_city_u, sel_glovo,
+                                  success_msg=f"{sel_glovo} escluso (non su Deliveroo)")
                         clear_cache(); st.rerun()
 
             st.info("💡 I match salvati qui entrano nel **ground truth** e vengono usati automaticamente dalle pipeline successive — non servono più revisioni.")
