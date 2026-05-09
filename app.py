@@ -1127,7 +1127,15 @@ def main():
         st.stop()
 
     # Header
-    st.title("🛵 Promo Parity — Glovo vs Deliveroo")
+    st.markdown(
+        "<h1 style='font-family:Montserrat,sans-serif;font-size:2.2rem;font-weight:800;margin-bottom:0'>"
+        "Promo Parity — "
+        "<span style='color:#C4980A'>Glovo</span>"
+        " vs "
+        "<span style='color:#00CCBC'>Deliveroo</span>"
+        "</h1>",
+        unsafe_allow_html=True,
+    )
 
     # DB check solo in modalita' locale
     if not _is_cloud_mode() and not DB_PATH.exists():
@@ -1155,6 +1163,12 @@ def main():
     _b64_matching = _icon_b64("twoBagsYellowCheck.png")
 
     _css_tabs = """<style>
+    /* ── Montserrat font ── */
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
+    html, body, [class*="css"], [data-testid], button, input, textarea, select, .stMarkdown, .stDataFrame {
+        font-family: 'Montserrat', sans-serif !important;
+    }
+
     /* Multiselect tags → teal Glovo */
     span[data-baseweb="tag"] {
         background-color: #00A082 !important;
