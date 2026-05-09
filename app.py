@@ -815,8 +815,8 @@ def main():
     # Header
     st.title("🛵 Promo Parity — Glovo vs Deliveroo")
 
-    # DB check
-    if not DB_PATH.exists():
+    # DB check solo in modalita' locale
+    if not _is_cloud_mode() and not DB_PATH.exists():
         st.error(
             f"Database non trovato: `{DB_PATH}`\n\n"
             "Esegui prima la pipeline:\n"
