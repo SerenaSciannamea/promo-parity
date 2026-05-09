@@ -46,10 +46,22 @@ if (-not $GlovoCsv) {
     }
 }
 
+# ---------- Configurazione Google Sheets (export cloud) ----------
+$sheetsId = "1lAsH0CaoJ3Lfp8uNaJ0-Bu3wTxlO-pn186z_coInnVs"
+$sheetsSa = "$env:USERPROFILE\Downloads\dogwood-sprite-400413-528afc69c595.json"
+
 # ---------- Step 1: Pipeline parity ----------
 Write-Log "Step 1: Pipeline parity Glovo vs Deliveroo"
 $args_list = @("-m", "pipeline.run_weekly", "--glovo-csv", $GlovoCsv)
 if ($Week) { $args_list += @("--week", $Week) }
+
+# Export su Google Sheets solo se il file credenziali esiste
+if (Test-Path $sheetsSa) {
+    $args_list += @("--sheets-id", $sheetsId, "--sheets-sa", $sheetsSa)
+    Write-Log "Export su Google Sheets attivo (sheet: $sheetsId)"
+} else {
+    Write-Log "ATTENZIONE: File credenziali non trovato ($sheetsSa). Export Sheets saltato."
+}
 
 Push-Location $proj
 & $venv @args_list
