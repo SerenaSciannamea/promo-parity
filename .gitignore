@@ -4,6 +4,7 @@
 
 # Secrets — MAI caricare su GitHub
 .streamlit/secrets.toml
+secrets.ps1
 *.json
 
 # Dati locali — rimangono sul PC, non su GitHub

@@ -17,8 +17,10 @@ $scrapeLog = Join-Path $PSScriptRoot "data\scraper_log.txt"
 
 New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot "data") | Out-Null
 
-# App Password Gmail — stessa di run_friday.ps1
-$emailAppPassword = ""   # <-- INCOLLA QUI LA APP PASSWORD
+# App Password Gmail — letta da secrets.ps1 (mai committato su GitHub)
+$emailAppPassword = ""
+$secretsFile = Join-Path $PSScriptRoot "secrets.ps1"
+if (Test-Path $secretsFile) { . $secretsFile }
 
 # ---------------------------------------------------------------------------
 # Funzione di log con timestamp

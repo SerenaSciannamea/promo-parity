@@ -55,9 +55,10 @@ $sheetsSa        = "$env:USERPROFILE\Downloads\dogwood-sprite-400413-528afc69c59
 $glovoSheetId    = "1ah5GsEJaSnv-S8jYytar3Vn9tU8MD8IITfNAWtmtveE"
 $glovoWorksheet  = "[RAW]Products"
 
-# App Password Gmail (16 caratteri, senza spazi)
-# Ottienila da: myaccount.google.com → Sicurezza → Password per le app
-$emailAppPassword = ""   # <-- INCOLLA QUI LA APP PASSWORD
+# App Password Gmail — letta da secrets.ps1 (mai committato su GitHub)
+$emailAppPassword = ""
+$secretsFile = "$proj\secrets.ps1"
+if (Test-Path $secretsFile) { . $secretsFile }
 
 # ===========================================================================
 # STEP 0 — Scarica automaticamente il CSV Glovo da Google Sheets
