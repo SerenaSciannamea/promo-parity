@@ -1057,8 +1057,29 @@ def main():
 
     sel_weeks, sel_cities = sidebar()
 
+    # Icona custom nel tab City Parity via CSS injection
+    _tab_icon = ROOT / "assets" / "promoZone.png"
+    if _tab_icon.exists():
+        import base64 as _b64mod
+        _tab_b64 = _b64mod.b64encode(_tab_icon.read_bytes()).decode()
+        st.markdown(f"""
+        <style>
+        div[data-testid="stTabs"] button[role="tab"]:nth-child(1)::before {{
+            content: '';
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            background-image: url('data:image/png;base64,{_tab_b64}');
+            background-size: contain;
+            background-repeat: no-repeat;
+            vertical-align: middle;
+            margin-right: 5px;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+
     tab1, tab2, tab3, tab4 = st.tabs([
-        "📊 City Parity",
+        "City Parity",
         "🏪 Store Detail",
         "📈 Trend",
         "🔗 Store Matching",
