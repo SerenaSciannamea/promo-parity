@@ -42,11 +42,11 @@ $sheetsSa = "$env:USERPROFILE\Downloads\dogwood-sprite-400413-528afc69c595.json"
 # ID del Google Sheet con i dati Glovo (BigQuery connector)
 # → copia l'ID dalla URL del tuo foglio Glovo:
 #   https://docs.google.com/spreadsheets/d/  <-- ID QUI -->  /edit
-$glovoSheetId = ""   # <-- INCOLLA QUI L'ID DEL FOGLIO GLOVO
+$glovoSheetId = "1ah5GsEJaSnv-S8jYytar3Vn9tU8MD8IITfNAWtmtveE"
 
-# Nome del tab che contiene i dati Glovo (es. "Products", "Sheet1", ecc.)
-# Lascia vuoto per usare il primo tab del foglio
-$glovoWorksheet = ""
+# Nome del tab che contiene i dati Glovo
+# Il connettore BigQuery crea un tab con prefisso [RAW] — lo gestiamo automaticamente
+$glovoWorksheet = "[RAW]Products"
 
 # ===========================================================================
 # STEP 0 — Scarica automaticamente il CSV Glovo da Google Sheets

@@ -13,13 +13,16 @@ Utilizzo:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 try:
     import gspread
+    from google.auth.transport.requests import Request as GoogleRequest
     from google.oauth2.service_account import Credentials
     HAS_GSPREAD = True
 except ImportError:
@@ -39,6 +42,9 @@ def download_glovo_csv(
 ) -> Path:
     """
     Scarica il foglio Glovo da Google Sheets e lo salva come CSV.
+
+    Usa l'API Drive export URL per evitare problemi con nomi di tab che
+    contengono caratteri speciali (es. '[RAW]Products' dei connettori BigQuery).
 
     Parameters
     ----------
@@ -64,24 +70,47 @@ def download_glovo_csv(
     client = gspread.authorize(creds)
     sheet  = client.open_by_key(sheet_id)
 
+    # Trova il worksheet giusto per nome, oppure prendi il primo
     if worksheet:
         ws = sheet.worksheet(worksheet)
     else:
         ws = sheet.get_worksheet(0)
 
-    print(f"[glovo_downloader] Scaricando tab '{ws.title}' dal foglio {sheet_id}...")
-    all_values = ws.get_all_values()
+    gid   = ws._properties["sheetId"]
+    title = ws.title
+    print(f"[glovo_downloader] Tab trovato: '{title}' (gid={gid})")
 
-    if not all_values or len(all_values) < 2:
+    # -----------------------------------------------------------------------
+    # Usa Drive export URL: aggira il problema dei nomi con caratteri speciali
+    # (es. '[RAW]Products' dei connettori BigQuery che rompono gspread).
+    # -----------------------------------------------------------------------
+    if not creds.valid:
+        creds.refresh(GoogleRequest())
+
+    export_url = (
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+        f"/export?format=csv&gid={gid}"
+    )
+    headers  = {"Authorization": f"Bearer {creds.token}"}
+    response = requests.get(export_url, headers=headers, timeout=120)
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Download fallito (HTTP {response.status_code}): {response.text[:300]}"
+        )
+
+    df = pd.read_csv(io.StringIO(response.text), dtype=str).fillna("")
+
+    if df.empty or len(df) < 1:
         raise ValueError(
-            f"Il foglio '{ws.title}' sembra vuoto o ha solo l'header. "
+            f"Il foglio '{title}' sembra vuoto. "
             "Assicurati che il connettore BigQuery abbia fatto il refresh prima delle 20:00."
         )
 
-    df = pd.DataFrame(all_values[1:], columns=all_values[0])
+    output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False, encoding="utf-8-sig")
-    print(f"[glovo_downloader] Salvato: {output_path}  ({len(df)} righe)")
+    print(f"[glovo_downloader] Salvato: {output_path}  ({len(df)} righe, {len(df.columns)} colonne)")
     return output_path
 
 
