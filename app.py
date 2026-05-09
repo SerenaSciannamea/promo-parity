@@ -564,7 +564,19 @@ def tab_city_parity(sel_weeks, sel_cities):
 # ---------------------------------------------------------------------------
 
 def tab_store_detail(sel_weeks, sel_cities):
-    st.header("🏪 Store Detail")
+    import base64 as _b64mod
+    _icon = ROOT / "assets" / "storePhone.png"
+    if _icon.exists():
+        _b64 = _b64mod.b64encode(_icon.read_bytes()).decode()
+        st.markdown(
+            f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
+                  <img src='data:image/png;base64,{_b64}' style='width:42px;height:42px;object-fit:contain'>
+                  <h2 style='margin:0;padding:0'>Store Detail</h2>
+                </div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.header("🏪 Store Detail")
     st.caption("Analisi per singolo store: promo Glovo vs Deliveroo, rank e copertura")
 
     store_df = load_store_parity()
@@ -1057,30 +1069,39 @@ def main():
 
     sel_weeks, sel_cities = sidebar()
 
-    # Icona custom nel tab City Parity via CSS injection
-    _tab_icon = ROOT / "assets" / "promoZone.png"
-    if _tab_icon.exists():
-        import base64 as _b64mod
-        _tab_b64 = _b64mod.b64encode(_tab_icon.read_bytes()).decode()
-        st.markdown(f"""
-        <style>
+    # Icone custom nei tab via CSS injection
+    import base64 as _b64mod
+
+    def _icon_b64(name: str) -> str:
+        p = ROOT / "assets" / name
+        return _b64mod.b64encode(p.read_bytes()).decode() if p.exists() else ""
+
+    _b64_promo = _icon_b64("promoZone.png")
+    _b64_store = _icon_b64("storePhone.png")
+
+    _css_tabs = "<style>"
+    if _b64_promo:
+        _css_tabs += f"""
         div[data-testid="stTabs"] button[role="tab"]:nth-child(1)::before {{
-            content: '';
-            display: inline-block;
-            width: 18px;
-            height: 18px;
-            background-image: url('data:image/png;base64,{_tab_b64}');
-            background-size: contain;
-            background-repeat: no-repeat;
-            vertical-align: middle;
-            margin-right: 5px;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
+            content:''; display:inline-block; width:18px; height:18px;
+            background-image:url('data:image/png;base64,{_b64_promo}');
+            background-size:contain; background-repeat:no-repeat;
+            vertical-align:middle; margin-right:5px;
+        }}"""
+    if _b64_store:
+        _css_tabs += f"""
+        div[data-testid="stTabs"] button[role="tab"]:nth-child(2)::before {{
+            content:''; display:inline-block; width:18px; height:18px;
+            background-image:url('data:image/png;base64,{_b64_store}');
+            background-size:contain; background-repeat:no-repeat;
+            vertical-align:middle; margin-right:5px;
+        }}"""
+    _css_tabs += "</style>"
+    st.markdown(_css_tabs, unsafe_allow_html=True)
 
     tab1, tab2, tab3, tab4 = st.tabs([
         "City Parity",
-        "🏪 Store Detail",
+        "Store Detail",
         "📈 Trend",
         "🔗 Store Matching",
     ])
