@@ -445,12 +445,18 @@ def sidebar() -> tuple[list[str], list[str]]:
 
 def tab_city_parity(sel_weeks, sel_cities):
     _icon = ROOT / "assets" / "promoZone.png"
-    col_icon, col_title = st.columns([0.07, 0.93])
-    with col_icon:
-        if _icon.exists():
-            st.image(str(_icon), width=48)
-    with col_title:
-        st.markdown("<h2 style='margin-top:6px;margin-bottom:0'>City Parity Overview</h2>", unsafe_allow_html=True)
+    if _icon.exists():
+        import base64
+        _b64 = base64.b64encode(_icon.read_bytes()).decode()
+        st.markdown(
+            f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
+                  <img src='data:image/png;base64,{_b64}' style='width:42px;height:42px;object-fit:contain'>
+                  <h2 style='margin:0;padding:0'>City Parity Overview</h2>
+                </div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.header("📊 City Parity Overview")
     st.caption("Visione sintetica per città e settimana, pesata per fatturato Glovo")
 
     city_df = load_city_parity()
