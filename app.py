@@ -254,15 +254,12 @@ def save_confirmed_match(city: str, glovo_name: str, deliveroo_name: str) -> Non
     if _is_cloud_mode():
         from pipeline.sheets_reader import write_store_mapping
         mapping = load_store_mapping().copy()
-        # Aggiorna o aggiunge la riga
-        mask = (mapping["city_code"] == city) & (mapping["glovo_name"] == glovo_name)
         new_row = {"city_code": city, "glovo_name": glovo_name, "glovo_store_id": "",
                    "deliveroo_name": deliveroo_name, "confidence": "1.0", "source": "manual_cloud"}
-        if mask.any():
-            for k, v in new_row.items():
-                mapping.loc[mask, k] = v
-        else:
-            mapping = pd.concat([mapping, pd.DataFrame([new_row])], ignore_index=True)
+        # Rimuovi riga esistente (se presente) e aggiungi quella aggiornata
+        mask = (mapping["city_code"] == city) & (mapping["glovo_name"] == glovo_name)
+        mapping = mapping[~mask]
+        mapping = pd.concat([mapping, pd.DataFrame([new_row])], ignore_index=True)
         write_store_mapping(_get_sheet_id(), _get_service_account(), mapping)
         # Rimuovi dalla review queue su Sheets
         _remove_from_cloud_review(city, glovo_name)
