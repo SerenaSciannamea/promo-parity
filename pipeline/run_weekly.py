@@ -270,7 +270,7 @@ def run_pipeline(
     n2 = upsert_df(conn, "city_parity",    city_parity)
     n3 = upsert_df(conn, "glovo_products", glovo_products)
     conn.close()
-    print(f"\n[DB] {n1} store_parity | {n2} city_parity | {n3} glovo_products → {db_path}")
+    print(f"\n[DB] {n1} store_parity | {n2} city_parity | {n3} glovo_products -> {db_path}")
 
     # ---- Salva CSV settimanali ----
     if save_csv:

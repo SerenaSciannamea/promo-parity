@@ -674,7 +674,19 @@ def tab_store_detail(sel_weeks, sel_cities):
 
         # ---- Confronto prodotti ----
         st.divider()
-        st.subheader("🛒 Prodotti per store")
+        _food_icon = ROOT / "assets" / "foodMainVertical.png"
+        if _food_icon.exists():
+            import base64 as _b64f
+            _b64_food = _b64f.b64encode(_food_icon.read_bytes()).decode()
+            st.markdown(
+                f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
+                      <img src='data:image/png;base64,{_b64_food}' style='width:36px;height:36px;object-fit:contain'>
+                      <h3 style='margin:0;padding:0'>Prodotti per store</h3>
+                    </div>""",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.subheader("🛒 Prodotti per store")
 
         city_code      = str(latest.get("city_code", ""))
         deliveroo_nm   = str(latest.get("deliveroo_name", ""))
@@ -768,7 +780,19 @@ def tab_store_detail(sel_weeks, sel_cities):
 # ---------------------------------------------------------------------------
 
 def tab_trend(sel_weeks, sel_cities):
-    st.header("📈 Trend Settimanale")
+    import base64 as _b64mod
+    _icon = ROOT / "assets" / "growth.png"
+    if _icon.exists():
+        _b64 = _b64mod.b64encode(_icon.read_bytes()).decode()
+        st.markdown(
+            f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
+                  <img src='data:image/png;base64,{_b64}' style='width:42px;height:42px;object-fit:contain'>
+                  <h2 style='margin:0;padding:0'>Trend Settimanale</h2>
+                </div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.header("📈 Trend Settimanale")
     st.caption("Evoluzione della parity nel tempo (tutte le settimane disponibili)")
 
     city_df = load_city_parity()
@@ -839,7 +863,19 @@ def tab_trend(sel_weeks, sel_cities):
 # ---------------------------------------------------------------------------
 
 def tab_store_matching():
-    st.header("🔗 Store Matching")
+    import base64 as _b64mod
+    _icon = ROOT / "assets" / "twoBagsYellowCheck.png"
+    if _icon.exists():
+        _b64 = _b64mod.b64encode(_icon.read_bytes()).decode()
+        st.markdown(
+            f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
+                  <img src='data:image/png;base64,{_b64}' style='width:42px;height:42px;object-fit:contain'>
+                  <h2 style='margin:0;padding:0'>Store Matching</h2>
+                </div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.header("🔗 Store Matching")
     st.caption("Tre sezioni: candidati da confermare · matching manuale · ground truth")
 
     # Mostra feedback dell'ultima operazione di salvataggio
@@ -1076,8 +1112,10 @@ def main():
         p = ROOT / "assets" / name
         return _b64mod.b64encode(p.read_bytes()).decode() if p.exists() else ""
 
-    _b64_promo = _icon_b64("promoZone.png")
-    _b64_store = _icon_b64("storePhone.png")
+    _b64_promo   = _icon_b64("promoZone.png")
+    _b64_store   = _icon_b64("storePhone.png")
+    _b64_trend   = _icon_b64("growth.png")
+    _b64_matching = _icon_b64("twoBagsYellowCheck.png")
 
     _css_tabs = "<style>"
     if _b64_promo:
@@ -1096,14 +1134,30 @@ def main():
             background-size:contain; background-repeat:no-repeat;
             vertical-align:middle; margin-right:5px;
         }}"""
+    if _b64_trend:
+        _css_tabs += f"""
+        div[data-testid="stTabs"] button[role="tab"]:nth-child(3)::before {{
+            content:''; display:inline-block; width:18px; height:18px;
+            background-image:url('data:image/png;base64,{_b64_trend}');
+            background-size:contain; background-repeat:no-repeat;
+            vertical-align:middle; margin-right:5px;
+        }}"""
+    if _b64_matching:
+        _css_tabs += f"""
+        div[data-testid="stTabs"] button[role="tab"]:nth-child(4)::before {{
+            content:''; display:inline-block; width:18px; height:18px;
+            background-image:url('data:image/png;base64,{_b64_matching}');
+            background-size:contain; background-repeat:no-repeat;
+            vertical-align:middle; margin-right:5px;
+        }}"""
     _css_tabs += "</style>"
     st.markdown(_css_tabs, unsafe_allow_html=True)
 
     tab1, tab2, tab3, tab4 = st.tabs([
         "City Parity",
         "Store Detail",
-        "📈 Trend",
-        "🔗 Store Matching",
+        "Trend",
+        "Store Matching",
     ])
 
     with tab1:
