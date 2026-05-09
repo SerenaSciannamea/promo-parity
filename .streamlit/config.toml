@@ -1,9 +1,9 @@
 [theme]
-primaryColor        = "#FF6B35"   # arancione Glovo
-backgroundColor     = "#0f1117"
-secondaryBackgroundColor = "#1a1d27"
-textColor           = "#fafafa"
-font                = "sans serif"
+primaryColor             = "#F2CC38"   # giallo Glovo
+backgroundColor          = "#FFFEF5"   # bianco caldo (sfondo principale)
+secondaryBackgroundColor = "#FFF8D0"   # giallo chiaro (sidebar e card)
+textColor                = "#161717"   # quasi nero Glovo
+font                     = "sans serif"
 
 [server]
 headless            = true

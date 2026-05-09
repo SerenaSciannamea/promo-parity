@@ -33,10 +33,10 @@ ROOT    = Path(__file__).resolve().parent
 DB_PATH = ROOT / "data" / "promo_parity.db"
 
 PARITY_COLORS = {
-    "SUPERIORITY": "#22c55e",
-    "PARITY":      "#f59e0b",
-    "INFERIORITY": "#ef4444",
-    "UNMATCHED":   "#94a3b8",
+    "SUPERIORITY": "#00A082",   # teal Glovo
+    "PARITY":      "#F2CC38",   # giallo Glovo
+    "INFERIORITY": "#ef4444",   # rosso
+    "UNMATCHED":   "#94a3b8",   # grigio
 }
 PARITY_ORDER = ["SUPERIORITY", "PARITY", "INFERIORITY", "UNMATCHED"]
 
@@ -389,6 +389,9 @@ def clear_cache():
 
 def parity_badge(label: str) -> str:
     icons = {"SUPERIORITY": "🟢", "PARITY": "🟡", "INFERIORITY": "🔴", "UNMATCHED": "⚪"}
+    colors = {"SUPERIORITY": "#00A082", "PARITY": "#b8960a", "INFERIORITY": "#ef4444", "UNMATCHED": "#94a3b8"}
+    c = colors.get(label, "")
+    style = f"color:{c};font-weight:600" if c else ""
     return f"{icons.get(label, '')} {label}"
 
 
@@ -488,7 +491,7 @@ def tab_city_parity(sel_weeks, sel_cities):
         z=pivot.values,
         x=pivot.columns.tolist(),
         y=pivot.index.tolist(),
-        colorscale=[[0, "#ef4444"], [0.5, "#f8fafc"], [1, "#22c55e"]],
+        colorscale=[[0, "#ef4444"], [0.5, "#FFF8D0"], [1, "#00A082"]],
         zmid=0,
         text=[[f"{v:.0f}%" for v in row] for row in pivot.values],
         texttemplate="%{text}",
@@ -592,10 +595,10 @@ def tab_store_detail(sel_weeks, sel_cities):
 
     def color_parity(val):
         colors = {
-            "SUPERIORITY": "background-color: #dcfce7",
-            "PARITY":      "background-color: #fef9c3",
-            "INFERIORITY": "background-color: #fee2e2",
-            "UNMATCHED":   "background-color: #f1f5f9",
+            "SUPERIORITY": "background-color: #d0f0ea; color: #00614e",
+            "PARITY":      "background-color: #FFF8D0; color: #7a6300",
+            "INFERIORITY": "background-color: #fee2e2; color: #991b1b",
+            "UNMATCHED":   "background-color: #f1f5f9; color: #475569",
         }
         return colors.get(val, "")
 
@@ -653,7 +656,8 @@ def tab_store_detail(sel_weeks, sel_cities):
 
         # ---- Glovo ----
         with col_g:
-            st.markdown("**🟡 Glovo**")
+            st.markdown("<span style='background:#F2CC38;color:#161717;padding:4px 12px;border-radius:6px;font-weight:700'>🛵 Glovo</span>", unsafe_allow_html=True)
+            st.write("")
             if gp.empty:
                 st.info("Dati prodotti Glovo non ancora disponibili.\nVerranno caricati al prossimo run della pipeline.")
             else:
@@ -684,7 +688,7 @@ def tab_store_detail(sel_weeks, sel_cities):
                 st.caption(f"{len(gp)} prodotti · {n_promo} in promozione")
                 st.dataframe(
                     disp_g[show_cols_g].style.apply(
-                        lambda row: ["background-color: #fef9c3" if gp.loc[row.name, "has_active_promo"] == "Y" else "" for _ in row],
+                        lambda row: ["background-color: #FFF8D0; color:#7a6300" if gp.loc[row.name, "has_active_promo"] == "Y" else "" for _ in row],
                         axis=1,
                     ),
                     use_container_width=True,
@@ -694,7 +698,8 @@ def tab_store_detail(sel_weeks, sel_cities):
 
         # ---- Deliveroo ----
         with col_d:
-            st.markdown("**🔵 Deliveroo**")
+            st.markdown("<span style='background:#00A082;color:white;padding:4px 12px;border-radius:6px;font-weight:700'>🛒 Deliveroo</span>", unsafe_allow_html=True)
+            st.write("")
             if not deliveroo_nm:
                 st.info("Store non matchato con Deliveroo.\nAssegna un match nel tab Store Matching.")
             elif dp.empty:
@@ -716,7 +721,7 @@ def tab_store_detail(sel_weeks, sel_cities):
                 st.dataframe(
                     disp_d[show_cols_d].style.apply(
                         lambda row: [
-                            "background-color: #dbeafe" if has_promo_col and disp_d.loc[row.name, "Promozione"] != "" else ""
+                            "background-color: #d0f0ea; color:#00614e" if has_promo_col and disp_d.loc[row.name, "Promozione"] != "" else ""
                             for _ in row
                         ],
                         axis=1,
