@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.glovo_reader      import read_and_aggregate
+from pipeline.glovo_reader      import load_glovo_csv, aggregate_store_level
 from pipeline.store_matcher     import (
     import_stores_csv,
     match_glovo_stores,
@@ -103,9 +103,24 @@ def init_db(conn: sqlite3.Connection) -> None:
             UNIQUE(city_code, week_num)
         );
 
+        CREATE TABLE IF NOT EXISTS glovo_products (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            city_code            TEXT NOT NULL,
+            store_name           TEXT NOT NULL,
+            week_num             TEXT NOT NULL,
+            product_name         TEXT,
+            type_of_promo        TEXT,
+            has_active_promo     TEXT,
+            avg_percentage_off   REAL,
+            avg_unit_price       REAL,
+            total_product_sold   REAL,
+            UNIQUE(city_code, store_name, week_num, product_name)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_store_week  ON store_parity(week_num);
         CREATE INDEX IF NOT EXISTS idx_store_city  ON store_parity(city_code);
         CREATE INDEX IF NOT EXISTS idx_city_week   ON city_parity(week_num);
+        CREATE INDEX IF NOT EXISTS idx_gp_store    ON glovo_products(city_code, store_name, week_num);
     """)
     conn.commit()
 
@@ -188,9 +203,11 @@ def run_pipeline(
 
     # ---- 1. Leggi e aggrega Glovo ----
     print(f"\n[1/5] Lettura CSV Glovo: {glovo_csv}")
-    glovo_store = read_and_aggregate(str(glovo_csv))
+    glovo_raw   = load_glovo_csv(str(glovo_csv))
+    glovo_store = aggregate_store_level(glovo_raw)
     # Forza week_num al valore passato (il CSV potrebbe avere settimane diverse)
     glovo_store["week_num"] = week
+    glovo_raw["week_num"]   = week
     print(f"      {len(glovo_store)} store Glovo caricati")
 
     # ---- 2. Leggi Deliveroo deduped ----
@@ -233,13 +250,27 @@ def run_pipeline(
     unm  = (store_parity["parity"] == "UNMATCHED").sum()
     print(f"      SUPERIORITY={sup}  PARITY={par}  INFERIORITY={inf}  UNMATCHED={unm}")
 
+    # ---- Prepara glovo_products (solo colonne utili, solo store in parity) ----
+    known_stores = set(zip(store_parity["city_code"], store_parity["glovo_name"]))
+    gp_cols = ["city_code", "store_name", "week_num", "product_name",
+               "type_of_promo", "has_active_promo",
+               "avg_percentage_off", "avg_unit_price", "total_product_sold"]
+    gp_cols_present = [c for c in gp_cols if c in glovo_raw.columns]
+    glovo_products = glovo_raw[gp_cols_present].copy()
+    glovo_products = glovo_products[
+        glovo_products.apply(
+            lambda r: (r["city_code"], r["store_name"]) in known_stores, axis=1
+        )
+    ]
+
     # ---- Salva nel DB ----
     conn = get_connection(db_path)
     init_db(conn)
-    n1 = upsert_df(conn, "store_parity", store_parity)
-    n2 = upsert_df(conn, "city_parity",  city_parity)
+    n1 = upsert_df(conn, "store_parity",   store_parity)
+    n2 = upsert_df(conn, "city_parity",    city_parity)
+    n3 = upsert_df(conn, "glovo_products", glovo_products)
     conn.close()
-    print(f"\n[DB] {n1} righe store_parity, {n2} righe city_parity salvate in {db_path}")
+    print(f"\n[DB] {n1} store_parity | {n2} city_parity | {n3} glovo_products → {db_path}")
 
     # ---- Salva CSV settimanali ----
     if save_csv:
@@ -258,13 +289,17 @@ def run_pipeline(
             from pipeline.store_matcher import load_mapping, load_review_queue
             mapping_df = load_mapping()
             review_df  = load_review_queue()
+            # Carica prodotti Deliveroo
+            deliveroo_products = deliveroo_df.copy() if not deliveroo_df.empty else None
             export_to_sheets(
                 spreadsheet_id       = sheets_id,
                 service_account_info = sheets_sa,
                 store_parity         = store_parity,
                 city_parity          = city_parity,
-                store_mapping        = mapping_df if len(mapping_df) > 0 else None,
-                needs_review         = review_df  if len(review_df)  > 0 else None,
+                store_mapping        = mapping_df       if len(mapping_df) > 0       else None,
+                needs_review         = review_df        if len(review_df)  > 0       else None,
+                glovo_products       = glovo_products   if len(glovo_products) > 0   else None,
+                deliveroo_products   = deliveroo_products,
             )
             print(f"[GSheets] Export completato")
         except Exception as e:

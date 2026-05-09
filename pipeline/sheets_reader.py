@@ -25,11 +25,13 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-TAB_STORE_PARITY   = "store_parity"
-TAB_CITY_PARITY    = "city_parity"
-TAB_STORE_MAPPING  = "store_mapping"
-TAB_NEEDS_REVIEW   = "needs_review"
-TAB_MANUAL_MATCHES = "manual_matches"   # append-only, scritto dall'UI
+TAB_STORE_PARITY       = "store_parity"
+TAB_CITY_PARITY        = "city_parity"
+TAB_STORE_MAPPING      = "store_mapping"
+TAB_NEEDS_REVIEW       = "needs_review"
+TAB_MANUAL_MATCHES     = "manual_matches"      # append-only, scritto dall'UI
+TAB_GLOVO_PRODUCTS     = "glovo_products"
+TAB_DELIVEROO_PRODUCTS = "deliveroo_products"
 
 MANUAL_COLS = [
     "city_code", "glovo_name", "glovo_store_id",
@@ -179,11 +181,21 @@ def read_all(
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    glovo_products     = _read_tab(sheet, TAB_GLOVO_PRODUCTS)
+    deliveroo_products = _read_tab(sheet, TAB_DELIVEROO_PRODUCTS)
+
+    # Cast numerici prodotti Glovo
+    for col in ["avg_percentage_off", "avg_unit_price", "total_product_sold"]:
+        if col in glovo_products.columns:
+            glovo_products[col] = pd.to_numeric(glovo_products[col], errors="coerce")
+
     return {
-        TAB_STORE_PARITY:  store_parity,
-        TAB_CITY_PARITY:   city_parity,
-        TAB_STORE_MAPPING: store_mapping,
-        TAB_NEEDS_REVIEW:  needs_review,
+        TAB_STORE_PARITY:       store_parity,
+        TAB_CITY_PARITY:        city_parity,
+        TAB_STORE_MAPPING:      store_mapping,
+        TAB_NEEDS_REVIEW:       needs_review,
+        TAB_GLOVO_PRODUCTS:     glovo_products,
+        TAB_DELIVEROO_PRODUCTS: deliveroo_products,
     }
 
 

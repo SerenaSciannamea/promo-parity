@@ -36,10 +36,12 @@ SCOPES = [
 ]
 
 # Tab names nel foglio Google Sheets di output
-TAB_STORE_PARITY  = "store_parity"
-TAB_CITY_PARITY   = "city_parity"
-TAB_STORE_MAPPING = "store_mapping"
-TAB_NEEDS_REVIEW  = "needs_review"
+TAB_STORE_PARITY       = "store_parity"
+TAB_CITY_PARITY        = "city_parity"
+TAB_STORE_MAPPING      = "store_mapping"
+TAB_NEEDS_REVIEW       = "needs_review"
+TAB_GLOVO_PRODUCTS     = "glovo_products"
+TAB_DELIVEROO_PRODUCTS = "deliveroo_products"
 
 
 def _get_client(service_account_info: dict | str | Path) -> "gspread.Client":
@@ -120,6 +122,26 @@ def _upsert_sheet(
     return len(combined)
 
 
+def _replace_sheet(
+    sheet: "gspread.Spreadsheet",
+    tab_name: str,
+    df: pd.DataFrame,
+) -> int:
+    """
+    Sostituisce TUTTO il contenuto di un tab con df (non fa upsert).
+    Usato per tab 'latest-only' come glovo_products e deliveroo_products.
+    """
+    try:
+        ws = sheet.worksheet(tab_name)
+    except gspread.WorksheetNotFound:
+        ws = sheet.add_worksheet(title=tab_name, rows=1, cols=len(df.columns))
+    ws.clear()
+    ws.append_row(df.columns.tolist())
+    if len(df) > 0:
+        ws.append_rows(df.fillna("").astype(str).values.tolist())
+    return len(df)
+
+
 def export_to_sheets(
     spreadsheet_id: str,
     service_account_info: dict | str | Path,
@@ -127,6 +149,8 @@ def export_to_sheets(
     city_parity:  pd.DataFrame | None = None,
     store_mapping: pd.DataFrame | None = None,
     needs_review:  pd.DataFrame | None = None,
+    glovo_products: pd.DataFrame | None = None,
+    deliveroo_products: pd.DataFrame | None = None,
 ) -> dict[str, int]:
     """
     Esporta i DataFrame su Google Sheets.
@@ -171,5 +195,20 @@ def export_to_sheets(
         n  = _upsert_sheet(ws, needs_review, key_cols=["city_code", "glovo_name"])
         result[TAB_NEEDS_REVIEW] = n
         print(f"[sheets_writer] needs_review: {n} righe scritte")
+
+    # Tab prodotti: sostituiti completamente (solo ultima settimana)
+    if glovo_products is not None and len(glovo_products) > 0:
+        n = _replace_sheet(sheet, TAB_GLOVO_PRODUCTS, glovo_products)
+        result[TAB_GLOVO_PRODUCTS] = n
+        print(f"[sheets_writer] glovo_products: {n} righe scritte")
+
+    if deliveroo_products is not None and len(deliveroo_products) > 0:
+        # Filtra colonne utili
+        dp_cols = ["city_code", "restaurant_name", "product_name",
+                   "product_description", "product_price", "promotion_type"]
+        dp_cols_present = [c for c in dp_cols if c in deliveroo_products.columns]
+        n = _replace_sheet(sheet, TAB_DELIVEROO_PRODUCTS, deliveroo_products[dp_cols_present])
+        result[TAB_DELIVEROO_PRODUCTS] = n
+        print(f"[sheets_writer] deliveroo_products: {n} righe scritte")
 
     return result

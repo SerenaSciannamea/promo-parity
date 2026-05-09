@@ -151,6 +151,32 @@ def _local_unmatched() -> pd.DataFrame:
     """, conn)
 
 
+def _local_glovo_products(city_code: str, store_name: str, week_num: str) -> pd.DataFrame:
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    return pd.read_sql(
+        """SELECT product_name, type_of_promo, has_active_promo,
+                  avg_percentage_off, avg_unit_price, total_product_sold
+           FROM glovo_products
+           WHERE city_code=? AND store_name=? AND week_num=?
+           ORDER BY has_active_promo DESC, avg_unit_price DESC""",
+        conn, params=(city_code, store_name, week_num),
+    )
+
+
+def _local_deliveroo_products(city_code: str, restaurant_name: str) -> pd.DataFrame:
+    p = ROOT / "output" / "deliveroo_promo_products.csv"
+    if not p.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(p, dtype=str).fillna("")
+    df.columns = [c.strip().lower() for c in df.columns]
+    mask = (df["city_code"] == city_code) & (df["restaurant_name"] == restaurant_name)
+    cols = ["product_name", "product_description", "product_price", "promotion_type"]
+    cols_present = [c for c in cols if c in df.columns]
+    return df[mask][cols_present].drop_duplicates("product_name")
+
+
 def _local_deliveroo_names() -> dict[str, list[str]]:
     p = ROOT / "output" / "deliveroo_promo_deduped.csv"
     if not p.exists():
@@ -212,6 +238,14 @@ def _cloud_unmatched() -> pd.DataFrame:
     )
 
 
+def _cloud_glovo_products() -> pd.DataFrame:
+    return _cloud_load_all().get("glovo_products", pd.DataFrame())
+
+
+def _cloud_deliveroo_products() -> pd.DataFrame:
+    return _cloud_load_all().get("deliveroo_products", pd.DataFrame())
+
+
 def _cloud_deliveroo_names() -> dict[str, list[str]]:
     """Nel cloud usiamo i nomi Deliveroo gia' presenti nel store_parity."""
     sp = _cloud_store_parity()
@@ -255,6 +289,42 @@ def load_unmatched_stores() -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def load_deliveroo_names_by_city() -> dict[str, list[str]]:
     return _cloud_deliveroo_names() if _is_cloud_mode() else _local_deliveroo_names()
+
+
+def load_glovo_products(city_code: str, store_name: str, week_num: str) -> pd.DataFrame:
+    """Prodotti Glovo per uno store specifico. Non cachato (filtra live)."""
+    if _is_cloud_mode():
+        df = _cloud_glovo_products()
+        if df.empty:
+            return pd.DataFrame()
+        mask = (
+            (df["city_code"] == city_code)
+            & (df["store_name"] == store_name)
+            & (df["week_num"] == week_num)
+        )
+        cols = ["product_name", "type_of_promo", "has_active_promo",
+                "avg_percentage_off", "avg_unit_price", "total_product_sold"]
+        cols_present = [c for c in cols if c in df.columns]
+        return df[mask][cols_present].sort_values(
+            ["has_active_promo", "avg_unit_price"],
+            ascending=[True, False],
+        )
+    return _local_glovo_products(city_code, store_name, week_num)
+
+
+def load_deliveroo_products(city_code: str, restaurant_name: str) -> pd.DataFrame:
+    """Prodotti Deliveroo per uno store specifico. Non cachato (filtra live)."""
+    if not restaurant_name:
+        return pd.DataFrame()
+    if _is_cloud_mode():
+        df = _cloud_deliveroo_products()
+        if df.empty:
+            return pd.DataFrame()
+        mask = (df["city_code"] == city_code) & (df["restaurant_name"] == restaurant_name)
+        cols = ["product_name", "product_description", "product_price", "promotion_type"]
+        cols_present = [c for c in cols if c in df.columns]
+        return df[mask][cols_present].drop_duplicates("product_name") if "product_name" in df.columns else df[mask][cols_present]
+    return _local_deliveroo_products(city_code, restaurant_name)
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +380,7 @@ def clear_cache():
     load_deliveroo_names_by_city.clear()
     if _is_cloud_mode():
         _cloud_load_all.clear()
+        # load_glovo_products e load_deliveroo_products non sono cachate
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +637,94 @@ def tab_store_detail(sel_weeks, sel_cities):
             fig_store.update_yaxes(autorange="reversed", dtick=1)
             fig_store.update_layout(height=280, margin=dict(t=40))
             st.plotly_chart(fig_store, use_container_width=True)
+
+        # ---- Confronto prodotti ----
+        st.divider()
+        st.subheader("🛒 Prodotti per store")
+
+        city_code      = str(latest.get("city_code", ""))
+        deliveroo_nm   = str(latest.get("deliveroo_name", ""))
+        week_nm        = str(latest.get("week_num", ""))
+
+        gp = load_glovo_products(city_code, sel_store, week_nm)
+        dp = load_deliveroo_products(city_code, deliveroo_nm)
+
+        col_g, col_d = st.columns(2)
+
+        # ---- Glovo ----
+        with col_g:
+            st.markdown("**🟡 Glovo**")
+            if gp.empty:
+                st.info("Dati prodotti Glovo non ancora disponibili.\nVerranno caricati al prossimo run della pipeline.")
+            else:
+                def _glovo_promo_badge(row):
+                    if row.get("has_active_promo", "N") == "Y":
+                        t = row.get("type_of_promo", "")
+                        pct = row.get("avg_percentage_off")
+                        if pct and pct > 0:
+                            return f"✅ {t} ({pct:.0f}%)"
+                        return f"✅ {t}" if t else "✅ Promo"
+                    return "—"
+
+                disp_g = gp.copy()
+                disp_g["promozione"] = disp_g.apply(_glovo_promo_badge, axis=1)
+                disp_g = disp_g.rename(columns={
+                    "product_name":       "Prodotto",
+                    "avg_unit_price":     "Prezzo €",
+                    "total_product_sold": "Qtà venduta",
+                })
+                show_cols_g = ["Prodotto", "promozione", "Prezzo €", "Qtà venduta"]
+                show_cols_g = [c for c in show_cols_g if c in disp_g.columns]
+
+                def _hl_promo_g(row):
+                    bg = "background-color: #fef9c3" if row.get("has_active_promo", "N") == "Y" else ""
+                    return [bg] * len(row)
+
+                n_promo = (disp_g.get("has_active_promo", pd.Series(dtype=str)) == "Y").sum() if "has_active_promo" in disp_g.columns else 0
+                st.caption(f"{len(gp)} prodotti · {n_promo} in promozione")
+                st.dataframe(
+                    disp_g[show_cols_g].style.apply(
+                        lambda row: ["background-color: #fef9c3" if gp.loc[row.name, "has_active_promo"] == "Y" else "" for _ in row],
+                        axis=1,
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=350,
+                )
+
+        # ---- Deliveroo ----
+        with col_d:
+            st.markdown("**🔵 Deliveroo**")
+            if not deliveroo_nm:
+                st.info("Store non matchato con Deliveroo.\nAssegna un match nel tab Store Matching.")
+            elif dp.empty:
+                st.info("Dati prodotti Deliveroo non ancora disponibili.\nVerranno caricati al prossimo run della pipeline.")
+            else:
+                disp_d = dp.copy()
+                disp_d = disp_d.rename(columns={
+                    "product_name":        "Prodotto",
+                    "product_description": "Descrizione",
+                    "product_price":       "Prezzo",
+                    "promotion_type":      "Promozione",
+                })
+                show_cols_d = ["Prodotto", "Promozione", "Prezzo", "Descrizione"]
+                show_cols_d = [c for c in show_cols_d if c in disp_d.columns]
+
+                has_promo_col = "Promozione" in disp_d.columns
+                n_promo_d = (disp_d["Promozione"] != "").sum() if has_promo_col else 0
+                st.caption(f"{len(dp)} prodotti · {n_promo_d} in promozione")
+                st.dataframe(
+                    disp_d[show_cols_d].style.apply(
+                        lambda row: [
+                            "background-color: #dbeafe" if has_promo_col and disp_d.loc[row.name, "Promozione"] != "" else ""
+                            for _ in row
+                        ],
+                        axis=1,
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=350,
+                )
 
 
 # ---------------------------------------------------------------------------
