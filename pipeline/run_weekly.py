@@ -216,12 +216,49 @@ def run_pipeline(
     deliveroo_df = load_deliveroo_deduped()
     print(f"      {len(deliveroo_df)} store Deliveroo caricati")
 
-    # ---- 3. Import mapping iniziale da Stores.csv ----
+    # ---- 3. Import mapping iniziale da Stores.csv + manual_matches da Sheets ----
     print(f"\n[3/5] Import mapping da Stores.csv")
     if Path(stores_csv).exists():
         import_stores_csv(stores_csv)
     else:
         print(f"      Stores.csv non trovato, skip import")
+
+    # Importa manual_matches da Google Sheets nel SQLite locale
+    if sheets_id and sheets_sa:
+        try:
+            import json as _json
+            import gspread as _gspread
+            from google.oauth2.service_account import Credentials as _Creds
+            from pipeline.store_matcher import confirm_match, reject_match
+            _scopes = ["https://spreadsheets.google.com/feeds",
+                       "https://www.googleapis.com/auth/drive"]
+            _sa = _json.load(open(sheets_sa, encoding="utf-8")) \
+                  if isinstance(sheets_sa, (str, Path)) else dict(sheets_sa)
+            _creds  = _Creds.from_service_account_info(_sa, scopes=_scopes)
+            _client = _gspread.authorize(_creds)
+            _sheet  = _client.open_by_key(sheets_id)
+            try:
+                _ws  = _sheet.worksheet("manual_matches")
+                _mm  = pd.DataFrame(_ws.get_all_records(default_blank=""))
+            except Exception:
+                _mm  = pd.DataFrame()
+            if not _mm.empty and "city_code" in _mm.columns:
+                # Ultima riga vince per ogni coppia (city, glovo)
+                _mm = _mm.drop_duplicates(subset=["city_code", "glovo_name"], keep="last")
+                imported = 0
+                for _, row in _mm.iterrows():
+                    city         = str(row.get("city_code", "")).strip()
+                    glovo_nm     = str(row.get("glovo_name", "")).strip()
+                    deliveroo_nm = str(row.get("deliveroo_name", "")).strip()
+                    if city and glovo_nm:
+                        if deliveroo_nm:
+                            confirm_match(city, glovo_nm, deliveroo_nm)
+                        else:
+                            reject_match(city, glovo_nm)
+                        imported += 1
+                print(f"[store_matcher] {imported} manual_matches importati da Sheets")
+        except Exception as e:
+            print(f"[store_matcher] Avviso: import manual_matches fallito ({e})")
 
     # ---- 4. Store matching ----
     print(f"\n[4/5] Store matching Glovo <-> Deliveroo")
