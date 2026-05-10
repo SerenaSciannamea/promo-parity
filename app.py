@@ -797,7 +797,14 @@ def tab_store_detail(sel_weeks, sel_cities):
     sel_store   = st.selectbox("Seleziona store", ["— seleziona —"] + store_names)
 
     if sel_store != "— seleziona —":
-        store_data = store_df[store_df["glovo_name"] == sel_store].sort_values("week_num")
+        # Filtra per città dallo stesso df filtrato (evita ambiguità tra store con stesso nome in città diverse)
+        store_city_rows = df[df["glovo_name"] == sel_store]
+        store_city = store_city_rows["city_code"].iloc[0] if not store_city_rows.empty else None
+
+        store_data = store_df[
+            (store_df["glovo_name"] == sel_store) &
+            (store_df["city_code"] == store_city if store_city else True)
+        ].sort_values("week_num")
 
         c1, c2 = st.columns(2)
         with c1:
@@ -812,10 +819,11 @@ def tab_store_detail(sel_weeks, sel_cities):
 
         # ---- Trend parity ultime 4 settimane (#9) ----
         store_all_hist = load_store_parity()
-        if sel_cities:
-            store_all_hist = store_all_hist[store_all_hist["city_code"].isin(sel_cities)]
         store_trend = (
-            store_all_hist[store_all_hist["glovo_name"] == sel_store]
+            store_all_hist[
+                (store_all_hist["glovo_name"] == sel_store) &
+                (store_all_hist["city_code"] == store_city if store_city else True)
+            ]
             .sort_values("week_num")
             .tail(4)
         )
