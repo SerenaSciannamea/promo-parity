@@ -1171,6 +1171,12 @@ def main():
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
     html { font-family: 'Montserrat', sans-serif !important; }
 
+    /* Centra testo in tutte le celle delle tabelle */
+    div[data-testid="stDataFrame"] td,
+    div[data-testid="stDataFrame"] th {
+        text-align: center !important;
+    }
+
     /* Multiselect tags → teal Glovo */
     span[data-baseweb="tag"] {
         background-color: #00A082 !important;
