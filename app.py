@@ -308,6 +308,34 @@ def load_deliveroo_names_by_city() -> dict[str, list[str]]:
     return _cloud_deliveroo_names() if _is_cloud_mode() else _local_deliveroo_names()
 
 
+@st.cache_data(ttl=300)
+def load_deliveroo_promo_counts() -> pd.DataFrame:
+    """
+    Restituisce un DataFrame con (city_code, restaurant_name, deliveroo_promo_products)
+    dove deliveroo_promo_products = n. prodotti con promotion_type non vuoto.
+    """
+    if _is_cloud_mode():
+        df = _cloud_deliveroo_products()
+    else:
+        p = ROOT / "output" / "deliveroo_promo_products.csv"
+        if not p.exists():
+            return pd.DataFrame(columns=["city_code", "restaurant_name", "deliveroo_promo_products"])
+        df = pd.read_csv(p, dtype=str).fillna("")
+        df.columns = [c.strip().lower() for c in df.columns]
+
+    if df.empty or "promotion_type" not in df.columns:
+        return pd.DataFrame(columns=["city_code", "restaurant_name", "deliveroo_promo_products"])
+
+    promo_mask = df["promotion_type"].str.strip() != ""
+    counts = (
+        df[promo_mask]
+        .groupby(["city_code", "restaurant_name"])
+        .size()
+        .reset_index(name="deliveroo_promo_products")
+    )
+    return counts
+
+
 def load_glovo_products(city_code: str, store_name: str, week_num: str) -> pd.DataFrame:
     """Prodotti Glovo per uno store specifico. Non cachato (filtra live)."""
     if _is_cloud_mode():
@@ -612,6 +640,16 @@ def tab_store_detail(sel_weeks, sel_cities):
     if sel_weeks:
         df = df[df["week_num"].isin(sel_weeks)]
 
+    # Merge conteggio prodotti in promo Deliveroo
+    roo_counts = load_deliveroo_promo_counts()
+    if not roo_counts.empty and "deliveroo_name" in df.columns:
+        df = df.merge(
+            roo_counts.rename(columns={"restaurant_name": "deliveroo_name"}),
+            on=["city_code", "deliveroo_name"],
+            how="left",
+        )
+        df["deliveroo_promo_products"] = df["deliveroo_promo_products"].fillna(0).astype(int)
+
     if df.empty:
         st.warning("Nessun dato per i filtri selezionati.")
         return
@@ -660,7 +698,7 @@ def tab_store_detail(sel_weeks, sel_cities):
         "city_code", "glovo_name", "deliveroo_name", "week_num",
         "parity",
         "glovo_rank_label", "glovo_pct_off", "glovo_promo_products",
-        "deliveroo_rank_label", "deliveroo_promo_text",
+        "deliveroo_rank_label", "deliveroo_promo_products", "deliveroo_promo_text",
         "revenue", "promo_coverage_pct"
     ]
     available = [c for c in display_cols if c in df_sorted.columns]
