@@ -748,6 +748,9 @@ def tab_store_detail(sel_weeks, sel_cities):
 
                 disp_g = gp.copy()
                 disp_g["promozione"] = disp_g.apply(_glovo_promo_badge, axis=1)
+                if "avg_unit_price" in disp_g.columns:
+                    disp_g["avg_unit_price"] = pd.to_numeric(disp_g["avg_unit_price"], errors="coerce") \
+                        .apply(lambda x: f"{x:.1f}€" if pd.notna(x) else "")
                 disp_g = disp_g.rename(columns={
                     "product_name":       "Prodotto",
                     "avg_unit_price":     "Prezzo €",
