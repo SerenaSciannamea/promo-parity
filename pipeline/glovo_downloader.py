@@ -24,6 +24,7 @@ try:
     import gspread
     from google.auth.transport.requests import Request as GoogleRequest
     from google.oauth2.service_account import Credentials
+    from googleapiclient.discovery import build as google_build
     HAS_GSPREAD = True
 except ImportError:
     HAS_GSPREAD = False
@@ -81,25 +82,48 @@ def download_glovo_csv(
     print(f"[glovo_downloader] Tab trovato: '{title}' (gid={gid})")
 
     # -----------------------------------------------------------------------
-    # Usa Drive export URL: aggira il problema dei nomi con caratteri speciali
-    # (es. '[RAW]Products' dei connettori BigQuery che rompono gspread).
+    # Legge tutte le righe tramite gspread batch usando lo sheetId numerico
+    # (aggira il problema dei nomi con [ ] che rompono la notazione A1).
     # -----------------------------------------------------------------------
     if not creds.valid:
         creds.refresh(GoogleRequest())
 
-    export_url = (
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-        f"/export?format=csv&gid={gid}"
-    )
-    headers  = {"Authorization": f"Bearer {creds.token}"}
-    response = requests.get(export_url, headers=headers, timeout=120)
-
-    if response.status_code != 200:
-        raise RuntimeError(
-            f"Download fallito (HTTP {response.status_code}): {response.text[:300]}"
+    # gspread batch_get accetta ranges come lista — usiamo solo il nome del
+    # foglio (senza apici), che gspread URL-encoda correttamente internamente.
+    # Se anche questo fallisce, ricadiamo sulla Drive export (500 righe max).
+    try:
+        rows = ws.get_all_values()
+    except Exception:
+        # Fallback: Drive export URL (funziona con nomi speciali ma limita a ~500 righe)
+        export_url = (
+            f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+            f"/export?format=csv&gid={gid}"
         )
+        headers_req = {"Authorization": f"Bearer {creds.token}"}
+        response = requests.get(export_url, headers=headers_req, timeout=120)
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Download fallito (HTTP {response.status_code}): {response.text[:300]}"
+            )
+        df = pd.read_csv(io.StringIO(response.text), dtype=str).fillna("")
+        if df.empty:
+            raise ValueError(f"Il foglio '{title}' sembra vuoto.")
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(output_path, index=False, encoding="utf-8-sig")
+        print(f"[glovo_downloader] Salvato (fallback Drive export): {output_path}  ({len(df)} righe, {len(df.columns)} colonne)")
+        return output_path
 
-    df = pd.read_csv(io.StringIO(response.text), dtype=str).fillna("")
+    if not rows:
+        raise ValueError(f"Il foglio '{title}' sembra vuoto.")
+
+    headers_row = rows[0]
+    data_rows   = rows[1:]
+    df = pd.DataFrame(
+        [r + [""] * (len(headers_row) - len(r)) for r in data_rows],
+        columns=headers_row,
+        dtype=str,
+    ).fillna("")
 
     if df.empty or len(df) < 1:
         raise ValueError(

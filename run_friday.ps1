@@ -53,7 +53,7 @@ Write-Log "===== Avvio pipeline Promo Parity ====="
 $outputSheetsId  = "1lAsH0CaoJ3Lfp8uNaJ0-Bu3wTxlO-pn186z_coInnVs"
 $sheetsSa        = "$env:USERPROFILE\Downloads\dogwood-sprite-400413-528afc69c595.json"
 $glovoSheetId    = "1ah5GsEJaSnv-S8jYytar3Vn9tU8MD8IITfNAWtmtveE"
-$glovoWorksheet  = "[RAW]Products"
+$glovoWorksheet  = "Products"
 
 # App Password Gmail — letta da secrets.ps1 (mai committato su GitHub)
 $emailAppPassword = ""
