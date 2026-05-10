@@ -1100,98 +1100,7 @@ def tab_trend(sel_weeks, sel_cities):
 
 
 # ---------------------------------------------------------------------------
-# TAB 4 — Pitch
-# ---------------------------------------------------------------------------
-
-def tab_pitch(sel_weeks, sel_cities):
-    st.markdown(
-        "<h2 style='margin:0;padding:0;margin-bottom:4px'>🎯 Stores da Pitchare</h2>",
-        unsafe_allow_html=True,
-    )
-    st.caption("Store in INFERIORITY rispetto a Deliveroo — prioritizzati per revenue")
-
-    store_df = load_store_parity()
-    if store_df.empty:
-        st.info("Nessun dato disponibile.")
-        return
-
-    df = store_df.copy()
-    if sel_weeks:
-        df = df[df["week_num"].isin(sel_weeks)]
-
-    # Filtro città
-    cities_available = sorted(df["city_code"].dropna().unique())
-    sel_city = st.selectbox(
-        "Città", ["Tutte"] + cities_available, key="pitch_city"
-    )
-    if sel_city != "Tutte":
-        df = df[df["city_code"] == sel_city]
-
-    inf_df = df[df["parity"] == "INFERIORITY"].copy()
-
-    # Formatta revenue
-    if "revenue" in inf_df.columns:
-        inf_df["revenue"] = pd.to_numeric(inf_df["revenue"], errors="coerce")
-
-    inf_sorted = inf_df.sort_values("revenue", ascending=False)
-
-    # ---- KPI ----
-    total_rev = inf_sorted["revenue"].sum() if "revenue" in inf_sorted.columns else 0
-    n_stores  = len(inf_sorted)
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("🔴 Store in Inferiority", n_stores)
-    k2.metric("💶 Revenue a rischio", f"€ {total_rev:,.0f}".replace(",", "."))
-    pct_inf = round(n_stores / len(df) * 100, 1) if len(df) > 0 else 0
-    k3.metric("📊 % store in Inferiority", f"{pct_inf}%")
-
-    st.divider()
-
-    if inf_sorted.empty:
-        st.success("Nessuno store in Inferiority per i filtri selezionati! 🎉")
-        return
-
-    # ---- Tabella pitch ----
-    pitch_cols = ["city_code", "glovo_name", "deliveroo_name",
-                  "revenue", "glovo_rank_label", "glovo_pct_off",
-                  "deliveroo_rank_label", "deliveroo_promo_text"]
-    avail = [c for c in pitch_cols if c in inf_sorted.columns]
-    disp  = inf_sorted[avail].copy()
-
-    # Formatta colonne
-    if "revenue" in disp.columns:
-        disp["revenue"] = disp["revenue"].apply(
-            lambda x: f"{x:,.0f}€".replace(",", ".") if pd.notna(x) else ""
-        )
-    if "glovo_pct_off" in disp.columns:
-        disp["glovo_pct_off"] = pd.to_numeric(inf_sorted["glovo_pct_off"], errors="coerce") \
-            .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
-
-    disp = disp.rename(columns={
-        "city_code":           "Città",
-        "glovo_name":          "Store Glovo",
-        "deliveroo_name":      "Store Deliveroo",
-        "revenue":             "Revenue",
-        "glovo_rank_label":    "Promo Glovo",
-        "glovo_pct_off":       "% Glovo",
-        "deliveroo_rank_label":"Promo Deliveroo",
-        "deliveroo_promo_text":"Dettaglio Deliveroo",
-    })
-
-    st.dataframe(
-        disp.style.apply(
-            lambda row: ["background-color:#fee2e2; color:#991b1b"] * len(row),
-            axis=1,
-        ),
-        use_container_width=True,
-        hide_index=True,
-        height=500,
-    )
-    st.caption(f"{n_stores} store da pitchare · Revenue totale a rischio: €{total_rev:,.0f}".replace(",", "."))
-
-
-# ---------------------------------------------------------------------------
-# TAB 5 — Store Matching
+# TAB 4 — Store Matching
 # ---------------------------------------------------------------------------
 
 def tab_store_matching():
@@ -1446,7 +1355,6 @@ def main():
     _b64_promo    = _icon_b64("promoZone.png")
     _b64_store    = _icon_b64("storePhone.png")
     _b64_trend    = _icon_b64("growth.png")
-    _b64_pitch    = _icon_b64("pitch.png")
     _b64_matching = _icon_b64("twoBagsYellowCheck.png")
 
     _css_tabs = """<style>
@@ -1499,17 +1407,9 @@ def main():
             background-size:contain; background-repeat:no-repeat;
             vertical-align:middle; margin-right:5px;
         }}"""
-    if _b64_pitch:
-        _css_tabs += f"""
-        div[data-testid="stTabs"] button[role="tab"]:nth-child(4)::before {{
-            content:''; display:inline-block; width:18px; height:18px;
-            background-image:url('data:image/png;base64,{_b64_pitch}');
-            background-size:contain; background-repeat:no-repeat;
-            vertical-align:middle; margin-right:5px;
-        }}"""
     if _b64_matching:
         _css_tabs += f"""
-        div[data-testid="stTabs"] button[role="tab"]:nth-child(5)::before {{
+        div[data-testid="stTabs"] button[role="tab"]:nth-child(4)::before {{
             content:''; display:inline-block; width:18px; height:18px;
             background-image:url('data:image/png;base64,{_b64_matching}');
             background-size:contain; background-repeat:no-repeat;
@@ -1518,11 +1418,10 @@ def main():
     _css_tabs += "</style>"
     st.markdown(_css_tabs, unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "City Parity",
         "Store Detail",
         "Trend",
-        "Pitch",
         "Store Matching",
     ])
 
@@ -1533,8 +1432,6 @@ def main():
     with tab3:
         tab_trend(sel_weeks, sel_cities)
     with tab4:
-        tab_pitch(sel_weeks, sel_cities)
-    with tab5:
         tab_store_matching()
 
 
