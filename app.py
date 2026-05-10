@@ -1126,16 +1126,6 @@ def main():
     if not check_password():
         st.stop()
 
-    # Header
-    st.markdown(
-        "<h1 style='font-family:Montserrat,sans-serif;font-size:2.2rem;font-weight:800;margin-bottom:0'>"
-        "Promo Parity — "
-        "<span style='color:#161717'>Glovo</span>"
-        " vs "
-        "<span style='color:#161717'>Deliveroo</span>"
-        "</h1>",
-        unsafe_allow_html=True,
-    )
 
     # DB check solo in modalita' locale
     if not _is_cloud_mode() and not DB_PATH.exists():
