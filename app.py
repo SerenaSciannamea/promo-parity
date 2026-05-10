@@ -55,10 +55,27 @@ def check_password() -> bool:
     if st.session_state.get("authenticated"):
         return True
 
-    st.markdown("""
+    import base64 as _b64mod
+    _glovo_logo = ROOT / "assets" / "glovo.png"
+    _roo_logo   = ROOT / "assets" / "roo.png"
+    _b64_g = _b64mod.b64encode(_glovo_logo.read_bytes()).decode() if _glovo_logo.exists() else ""
+    _b64_r = _b64mod.b64encode(_roo_logo.read_bytes()).decode()   if _roo_logo.exists()   else ""
+
+    _logos_html = ""
+    if _b64_g:
+        _logos_html += f"<img src='data:image/png;base64,{_b64_g}' style='height:48px;width:48px;object-fit:contain'>"
+    if _b64_g and _b64_r:
+        _logos_html += "<span style='font-size:1.4rem;color:#cbd5e1;margin:0 10px'>×</span>"
+    if _b64_r:
+        _logos_html += f"<img src='data:image/png;base64,{_b64_r}' style='height:48px;width:48px;object-fit:contain'>"
+
+    st.markdown(f"""
         <div style='display:flex;flex-direction:column;align-items:center;
                     justify-content:center;padding:80px 0 40px'>
-            <h1 style='font-size:2.2rem;margin-bottom:4px'>🛵 Promo Parity</h1>
+            <div style='display:flex;align-items:center;gap:8px;margin-bottom:12px'>
+                {_logos_html}
+            </div>
+            <h1 style='font-size:2.2rem;margin-bottom:4px'>Promo Parity</h1>
             <p style='color:#94a3b8;margin-bottom:40px'>Glovo vs Deliveroo</p>
         </div>
     """, unsafe_allow_html=True)
