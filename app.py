@@ -629,9 +629,15 @@ def tab_store_detail(sel_weeks, sel_cities):
     available = [c for c in display_cols if c in df_sorted.columns]
     disp = df_sorted[available].copy()
 
-    # Formatta glovo_pct_off: 25.000000 → "25.0%"
+    # Formatta colonne numeriche
     if "glovo_pct_off" in disp.columns:
         disp["glovo_pct_off"] = pd.to_numeric(disp["glovo_pct_off"], errors="coerce") \
+            .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
+    if "revenue" in disp.columns:
+        disp["revenue"] = pd.to_numeric(disp["revenue"], errors="coerce") \
+            .apply(lambda x: f"{x:,.0f}€".replace(",", ".") if pd.notna(x) else "")
+    if "promo_coverage_pct" in disp.columns:
+        disp["promo_coverage_pct"] = pd.to_numeric(disp["promo_coverage_pct"], errors="coerce") \
             .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
 
     def color_parity(val):
