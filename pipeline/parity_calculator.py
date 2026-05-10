@@ -25,7 +25,7 @@ Output city-level (una riga per city_code x week):
 from __future__ import annotations
 
 import pandas as pd
-from pipeline.promo_ranker import rank_deliveroo, parity_label, rank_label, NO_PROMO_RANK
+from pipeline.promo_ranker import rank_deliveroo, parity_label, rank_label, NO_PROMO_RANK, extract_pct_deliveroo
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,14 @@ def compute_store_parity(
             if deliveroo_promo is not None:
                 deliveroo_rank = rank_deliveroo(deliveroo_promo)
 
-        parity = parity_label(glovo_rank, deliveroo_rank) if deliveroo_nm else "UNMATCHED"
+        deliveroo_pct = extract_pct_deliveroo(deliveroo_promo) if deliveroo_promo else 0.0
+        glovo_pct     = float(row.get("avg_pct_off") or 0)
+
+        parity = parity_label(
+            glovo_rank, deliveroo_rank,
+            glovo_pct_off=glovo_pct,
+            deliveroo_pct_off=deliveroo_pct,
+        ) if deliveroo_nm else "UNMATCHED"
 
         rows.append({
             "city_code":            city,

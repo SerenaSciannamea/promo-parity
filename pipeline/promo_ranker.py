@@ -96,9 +96,37 @@ def rank_deliveroo(promotion_type: str | None) -> float:
     return best
 
 
-def parity_label(glovo_rank: float, deliveroo_rank: float) -> str:
+def extract_pct_deliveroo(promotion_type: str | None) -> float:
+    """
+    Estrae la percentuale di sconto piu' alta dal testo promo Deliveroo.
+    Es. "Spendi almeno 20 € | -20% su prodotti selezionati" -> 20.0
+    Ritorna 0.0 se non trovata.
+    """
+    if not promotion_type:
+        return 0.0
+    matches = re.findall(r"(\d+(?:[.,]\d+)?)\s*%", str(promotion_type))
+    if not matches:
+        return 0.0
+    return max(float(m.replace(",", ".")) for m in matches)
+
+
+PCT_SUPERIORITY_THRESHOLD = 2.0   # pp minima per promuovere da PARITY a SUPERIORITY/INFERIORITY
+
+
+def parity_label(
+    glovo_rank: float,
+    deliveroo_rank: float,
+    glovo_pct_off: float = 0.0,
+    deliveroo_pct_off: float = 0.0,
+) -> str:
     """
     Restituisce 'SUPERIORITY', 'PARITY' o 'INFERIORITY' dal punto di vista Glovo.
+
+    Logica:
+    1. Se rank diverso: vince il rank piu' basso (promo piu' forte).
+    2. Se rank uguale E entrambi sono promo % (rank 2.0):
+       confronta la percentuale di sconto con soglia PCT_SUPERIORITY_THRESHOLD.
+    3. Altrimenti: PARITY.
 
     Quando entrambi sono senza promo (rank 6) -> PARITY.
     """
@@ -107,6 +135,13 @@ def parity_label(glovo_rank: float, deliveroo_rank: float) -> str:
     elif glovo_rank > deliveroo_rank:
         return "INFERIORITY"
     else:
+        # Stesso rank: per promo %-prodotto confronta la % di sconto
+        if glovo_rank == 2.0 and glovo_pct_off > 0 and deliveroo_pct_off > 0:
+            diff = glovo_pct_off - deliveroo_pct_off
+            if diff >= PCT_SUPERIORITY_THRESHOLD:
+                return "SUPERIORITY"
+            elif diff <= -PCT_SUPERIORITY_THRESHOLD:
+                return "INFERIORITY"
         return "PARITY"
 
 
