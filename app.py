@@ -641,14 +641,19 @@ def tab_store_detail(sel_weeks, sel_cities):
         df = df[df["week_num"].isin(sel_weeks)]
 
     # Merge conteggio prodotti in promo Deliveroo
+    # Filtra restaurant_name vuoti per evitare join many-to-many sugli UNMATCHED
     roo_counts = load_deliveroo_promo_counts()
     if not roo_counts.empty and "deliveroo_name" in df.columns:
-        df = df.merge(
-            roo_counts.rename(columns={"restaurant_name": "deliveroo_name"}),
-            on=["city_code", "deliveroo_name"],
-            how="left",
-        )
-        df["deliveroo_promo_products"] = df["deliveroo_promo_products"].fillna(0).astype(int)
+        roo_clean = roo_counts[
+            roo_counts["restaurant_name"].str.strip() != ""
+        ].rename(columns={"restaurant_name": "deliveroo_name"})
+        if not roo_clean.empty:
+            df = df.merge(roo_clean, on=["city_code", "deliveroo_name"], how="left")
+            df["deliveroo_promo_products"] = df["deliveroo_promo_products"].fillna(0).astype(int)
+        else:
+            df["deliveroo_promo_products"] = 0
+    else:
+        df["deliveroo_promo_products"] = 0
 
     if df.empty:
         st.warning("Nessun dato per i filtri selezionati.")
