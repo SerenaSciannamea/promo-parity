@@ -898,7 +898,14 @@ def tab_trend(sel_weeks, sel_cities):
 
     # ---- Tabella storica ----
     with st.expander("Dati storici completi"):
-        st.dataframe(df.sort_values(["week_num", "city_code"]), use_container_width=True, hide_index=True)
+        df_hist = df.sort_values(["week_num", "city_code"]).copy()
+        for col in ["pct_superiority", "pct_parity", "pct_inferiority",
+                    "w_superiority", "w_parity", "w_inferiority",
+                    "match_coverage_pct"]:
+            if col in df_hist.columns:
+                df_hist[col] = pd.to_numeric(df_hist[col], errors="coerce") \
+                    .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
+        st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
