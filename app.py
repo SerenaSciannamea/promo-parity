@@ -693,12 +693,34 @@ def tab_store_detail(sel_weeks, sel_cities):
 
     df_sorted = df.sort_values(sort_by, ascending=(sort_by != "revenue"))
 
+    import re as _re
+
+    # Helper: estrae la % di sconto dal testo promo Deliveroo
+    def _extract_roo_pct(text: str) -> str:
+        if not text:
+            return ""
+        # Cerca pattern come "-20%", "20%", "25% di sconto"
+        m = _re.search(r"-?(\d+(?:[.,]\d+)?)\s*%", text)
+        return f"{m.group(1)}%" if m else ""
+
+    # Helper: formatta il conteggio prodotti Deliveroo in promo
+    def _roo_items_label(row) -> str:
+        rank = str(row.get("deliveroo_rank_label", "")).lower()
+        promo_text = str(row.get("deliveroo_promo_text", "")).lower()
+        count = row.get("deliveroo_promo_products", 0)
+        # Basket = sconto su tutto l'ordine, non su singoli prodotti
+        if "basket" in rank or "spendi" in promo_text or "ordine" in promo_text:
+            return "Full menu"
+        if count and int(count) > 0:
+            return str(int(count))
+        return ""
+
     # Tabella principale
     display_cols = [
         "city_code", "glovo_name", "deliveroo_name", "week_num",
         "parity",
         "glovo_rank_label", "glovo_pct_off", "glovo_promo_products",
-        "deliveroo_rank_label", "deliveroo_promo_products", "deliveroo_promo_text",
+        "deliveroo_rank_label", "deliveroo_promo_text", "deliveroo_promo_products",
         "revenue", "promo_coverage_pct"
     ]
     available = [c for c in display_cols if c in df_sorted.columns]
@@ -715,6 +737,36 @@ def tab_store_detail(sel_weeks, sel_cities):
         disp["promo_coverage_pct"] = pd.to_numeric(disp["promo_coverage_pct"], errors="coerce") \
             .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
 
+    # Colonna Deliveroo % OFF estratta dal testo promo
+    if "deliveroo_promo_text" in disp.columns:
+        disp.insert(
+            disp.columns.get_loc("deliveroo_promo_text"),
+            "deliveroo_pct_off",
+            disp["deliveroo_promo_text"].apply(_extract_roo_pct),
+        )
+
+    # Colonna Deliveroo Items in promo (Full menu per basket)
+    if "deliveroo_promo_products" in disp.columns:
+        disp["deliveroo_promo_products"] = disp.apply(_roo_items_label, axis=1)
+
+    # Rinomina colonne
+    disp = disp.rename(columns={
+        "city_code":               "City Code",
+        "glovo_name":              "Glovo Restaurant",
+        "deliveroo_name":          "Deliveroo Restaurant",
+        "week_num":                "Week",
+        "parity":                  "Comparison",
+        "glovo_rank_label":        "Glovo Promo Type",
+        "glovo_pct_off":           "Glovo % OFF",
+        "glovo_promo_products":    "Glovo Items in Promo",
+        "deliveroo_rank_label":    "Deliveroo Promo Type",
+        "deliveroo_pct_off":       "Deliveroo % OFF",
+        "deliveroo_promo_products":"Deliveroo Items in Promo",
+        "deliveroo_promo_text":    "Deliveroo Promo Detail",
+        "revenue":                 "Revenue",
+        "promo_coverage_pct":      "Glovo Promo Coverage",
+    })
+
     def color_parity(val):
         colors = {
             "SUPERIORITY": "background-color: #d0f0ea; color: #00614e",
@@ -725,7 +777,7 @@ def tab_store_detail(sel_weeks, sel_cities):
         return colors.get(val, "")
 
     st.dataframe(
-        disp.style.map(color_parity, subset=["parity"]),
+        disp.style.map(color_parity, subset=["Comparison"]),
         use_container_width=True,
         hide_index=True,
         height=500,
