@@ -946,6 +946,7 @@ def tab_store_matching():
             cities_r = sorted(review_df["city_code"].unique())
             sel_city_r = st.selectbox("Città", ["Tutte"] + cities_r, key="rev_city")
             df_r = review_df if sel_city_r == "Tutte" else review_df[review_df["city_code"] == sel_city_r]
+            df_r = df_r.sort_values("score", ascending=False)
 
             st.dataframe(
                 df_r[["city_code","glovo_name","candidate_deliveroo","score","reason"]],
