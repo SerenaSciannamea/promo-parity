@@ -1155,7 +1155,7 @@ def main():
     _css_tabs = """<style>
     /* ── Montserrat font ── */
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
-    html, body, [class*="css"], [data-testid], button, input, textarea, select, .stMarkdown, .stDataFrame {
+    .stApp, .stSidebar, .main .block-container {
         font-family: 'Montserrat', sans-serif !important;
     }
 
