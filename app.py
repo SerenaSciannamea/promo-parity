@@ -611,10 +611,30 @@ def tab_store_detail(sel_weeks, sel_cities):
     with col3:
         sort_by = st.selectbox("Ordina per", ["revenue", "parity", "glovo_rank"], index=0)
 
+    col4, col5 = st.columns(2)
+    with col4:
+        glovo_promo_opts = sorted(df["glovo_rank_label"].replace("", pd.NA).dropna().unique().tolist()) \
+            if "glovo_rank_label" in df.columns else []
+        glovo_promo_filter = st.multiselect(
+            "Promo Glovo", glovo_promo_opts, default=[],
+            placeholder="Tutte", key="store_glovo_promo_filter"
+        )
+    with col5:
+        roo_promo_opts = sorted(df["deliveroo_rank_label"].replace("", pd.NA).dropna().unique().tolist()) \
+            if "deliveroo_rank_label" in df.columns else []
+        roo_promo_filter = st.multiselect(
+            "Promo Deliveroo", roo_promo_opts, default=[],
+            placeholder="Tutte", key="store_roo_promo_filter"
+        )
+
     if parity_filter:
         df = df[df["parity"].isin(parity_filter)]
     if search:
         df = df[df["glovo_name"].str.contains(search, case=False, na=False)]
+    if glovo_promo_filter:
+        df = df[df["glovo_rank_label"].isin(glovo_promo_filter)]
+    if roo_promo_filter:
+        df = df[df["deliveroo_rank_label"].isin(roo_promo_filter)]
 
     df_sorted = df.sort_values(sort_by, ascending=(sort_by != "revenue"))
 
