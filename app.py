@@ -678,6 +678,46 @@ def tab_store_detail(sel_weeks, sel_cities):
             st.metric("Prodotti in promo", int(latest.get("glovo_promo_products", 0)))
             st.metric("Copertura promo", f"{latest.get('promo_coverage_pct', 0):.1f}%")
 
+        # ---- Trend parity ultime 4 settimane (#9) ----
+        store_all_hist = load_store_parity()
+        if sel_cities:
+            store_all_hist = store_all_hist[store_all_hist["city_code"].isin(sel_cities)]
+        store_trend = (
+            store_all_hist[store_all_hist["glovo_name"] == sel_store]
+            .sort_values("week_num")
+            .tail(4)
+        )
+        if len(store_trend) >= 1:
+            st.markdown("**Trend parity — ultime 4 settimane**")
+            trend_fig = go.Figure()
+            for _, row in store_trend.iterrows():
+                txt_color = "#7a6300" if row["parity"] == "PARITY" else "white"
+                trend_fig.add_trace(go.Bar(
+                    x=[row["week_num"]],
+                    y=[1],
+                    marker_color=PARITY_COLORS.get(row["parity"], "#94a3b8"),
+                    text=row["parity"],
+                    textposition="inside",
+                    textfont=dict(color=txt_color, size=11),
+                    showlegend=False,
+                    hovertemplate=(
+                        f"<b>{row['week_num']}</b><br>"
+                        f"Parity: {row['parity']}<br>"
+                        f"Revenue: €{row.get('revenue', 0):,.0f}"
+                        "<extra></extra>"
+                    ),
+                ))
+            trend_fig.update_layout(
+                barmode="group",
+                height=130,
+                yaxis=dict(showticklabels=False, showgrid=False, zeroline=False, range=[0, 1.3]),
+                xaxis=dict(title="", tickfont=dict(size=11)),
+                margin=dict(t=10, b=30, l=10, r=10),
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+            )
+            st.plotly_chart(trend_fig, use_container_width=True)
+
         if len(store_data) > 1:
             fig_store = px.line(
                 store_data, x="week_num", y="glovo_rank",
@@ -883,6 +923,77 @@ def tab_trend(sel_weeks, sel_cities):
     fig_area.update_layout(height=350, margin=dict(t=20))
     st.plotly_chart(fig_area, use_container_width=True)
 
+    # ---- Week-over-week changes (#4) ----
+    st.subheader("Variazione settimana su settimana")
+    if len(agg) >= 2:
+        last = agg.iloc[-1]
+        prev = agg.iloc[-2]
+        sup_d = last["w_superiority"] - prev["w_superiority"]
+        par_d = last["w_parity"]      - prev["w_parity"]
+        inf_d = last["w_inferiority"] - prev["w_inferiority"]
+        d1, d2, d3 = st.columns(3)
+        d1.metric(
+            f"SUPERIORITY — {last['week_num']}",
+            f"{last['w_superiority']:.1f}%",
+            f"{sup_d:+.1f}pp vs {prev['week_num']}",
+        )
+        d2.metric(
+            f"PARITY — {last['week_num']}",
+            f"{last['w_parity']:.1f}%",
+            f"{par_d:+.1f}pp vs {prev['week_num']}",
+        )
+        d3.metric(
+            f"INFERIORITY — {last['week_num']}",
+            f"{last['w_inferiority']:.1f}%",
+            f"{inf_d:+.1f}pp vs {prev['week_num']}",
+            delta_color="inverse",
+        )
+
+        # Tabella delta per città
+        if len(df["city_code"].unique()) > 1:
+            with st.expander("Delta per città"):
+                weeks_sorted = sorted(df["week_num"].unique())
+                if len(weeks_sorted) >= 2:
+                    wk_last = weeks_sorted[-1]
+                    wk_prev = weeks_sorted[-2]
+                    df_last = df[df["week_num"] == wk_last].set_index("city_code")
+                    df_prev = df[df["week_num"] == wk_prev].set_index("city_code")
+                    common_cities = df_last.index.intersection(df_prev.index)
+                    delta_rows = []
+                    for city in sorted(common_cities):
+                        delta_rows.append({
+                            "Città":        city,
+                            "SUP Δ (pp)":   round(df_last.loc[city, "w_superiority"] - df_prev.loc[city, "w_superiority"], 1),
+                            "PAR Δ (pp)":   round(df_last.loc[city, "w_parity"]      - df_prev.loc[city, "w_parity"],      1),
+                            "INF Δ (pp)":   round(df_last.loc[city, "w_inferiority"] - df_prev.loc[city, "w_inferiority"], 1),
+                        })
+                    delta_df = pd.DataFrame(delta_rows)
+
+                    def _color_delta(val):
+                        if not isinstance(val, (int, float)):
+                            return ""
+                        if val > 0:
+                            return "color: #00614e; font-weight: 600"
+                        if val < 0:
+                            return "color: #991b1b; font-weight: 600"
+                        return ""
+
+                    def _color_inf_delta(val):
+                        if not isinstance(val, (int, float)):
+                            return ""
+                        if val < 0:
+                            return "color: #00614e; font-weight: 600"
+                        if val > 0:
+                            return "color: #991b1b; font-weight: 600"
+                        return ""
+
+                    styled = delta_df.style \
+                        .applymap(_color_delta,     subset=["SUP Δ (pp)", "PAR Δ (pp)"]) \
+                        .applymap(_color_inf_delta, subset=["INF Δ (pp)"])
+                    st.dataframe(styled, use_container_width=True, hide_index=True)
+    else:
+        st.info("Serve almeno 2 settimane di dati per il confronto.")
+
     # ---- Line chart per città ----
     st.subheader("Parity Score per città nel tempo")
     st.caption("Score = % Superiority − % Inferiority (revenue-weighted)")
@@ -909,6 +1020,63 @@ def tab_trend(sel_weeks, sel_cities):
                 df_hist[col] = pd.to_numeric(df_hist[col], errors="coerce") \
                     .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
+
+    # ---- Breakdown per tipo di promo (#8) ----
+    st.divider()
+    st.subheader("Breakdown per tipo di promo")
+    st.caption("Quanti store usano ciascuna meccanica promozionale (ultima settimana disponibile, store matchati)")
+
+    store_full = load_store_parity()
+    if not store_full.empty:
+        latest_wk  = store_full["week_num"].max()
+        s_latest   = store_full[store_full["week_num"] == latest_wk].copy()
+        if sel_cities:
+            s_latest = s_latest[s_latest["city_code"].isin(sel_cities)]
+        matched_s  = s_latest[s_latest["parity"] != "UNMATCHED"]
+
+        col_g8, col_d8 = st.columns(2)
+
+        with col_g8:
+            if "glovo_rank_label" in matched_s.columns:
+                g_counts = (
+                    matched_s["glovo_rank_label"]
+                    .replace("", pd.NA).dropna()
+                    .value_counts()
+                    .reset_index()
+                )
+                g_counts.columns = ["Tipo Promo", "Store"]
+                if not g_counts.empty:
+                    fig_g8 = px.bar(
+                        g_counts, x="Tipo Promo", y="Store",
+                        title="Glovo — meccaniche promo",
+                        color_discrete_sequence=["#F2CC38"],
+                        text="Store",
+                    )
+                    fig_g8.update_traces(textposition="outside", marker_line_color="#c9a800", marker_line_width=1)
+                    fig_g8.update_layout(height=370, margin=dict(t=50, b=10), showlegend=False,
+                                         plot_bgcolor="white", yaxis_title="N. store")
+                    st.plotly_chart(fig_g8, use_container_width=True)
+
+        with col_d8:
+            if "deliveroo_rank_label" in matched_s.columns:
+                d_counts = (
+                    matched_s["deliveroo_rank_label"]
+                    .replace("", pd.NA).dropna()
+                    .value_counts()
+                    .reset_index()
+                )
+                d_counts.columns = ["Tipo Promo", "Store"]
+                if not d_counts.empty:
+                    fig_d8 = px.bar(
+                        d_counts, x="Tipo Promo", y="Store",
+                        title="Deliveroo — meccaniche promo",
+                        color_discrete_sequence=["#00CCBC"],
+                        text="Store",
+                    )
+                    fig_d8.update_traces(textposition="outside", marker_line_color="#009e91", marker_line_width=1)
+                    fig_d8.update_layout(height=370, margin=dict(t=50, b=10), showlegend=False,
+                                         plot_bgcolor="white", yaxis_title="N. store")
+                    st.plotly_chart(fig_d8, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
