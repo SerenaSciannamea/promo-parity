@@ -1151,8 +1151,8 @@ def tab_trend(sel_weeks, sel_cities):
                         return ""
 
                     styled = delta_df.style \
-                        .applymap(_color_delta,     subset=["SUP Δ (pp)", "PAR Δ (pp)"]) \
-                        .applymap(_color_inf_delta, subset=["INF Δ (pp)"])
+                        .map(_color_delta,     subset=["SUP Δ (pp)", "PAR Δ (pp)"]) \
+                        .map(_color_inf_delta, subset=["INF Δ (pp)"])
                     st.dataframe(styled, use_container_width=True, hide_index=True)
     else:
         st.info("Serve almeno 2 settimane di dati per il confronto.")
