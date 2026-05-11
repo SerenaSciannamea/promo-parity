@@ -1153,12 +1153,53 @@ def tab_trend(sel_weeks, sel_cities):
     # ---- Tabella storica ----
     with st.expander("Dati storici completi"):
         df_hist = df.sort_values(["week_num", "city_code"]).copy()
+
+        # Elimina colonna id se presente
+        if "id" in df_hist.columns:
+            df_hist = df_hist.drop(columns=["id"])
+
+        # Formatta percentuali
         for col in ["pct_superiority", "pct_parity", "pct_inferiority",
                     "w_superiority", "w_parity", "w_inferiority",
                     "match_coverage_pct"]:
             if col in df_hist.columns:
                 df_hist[col] = pd.to_numeric(df_hist[col], errors="coerce") \
                     .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
+
+        # Aggiungi parity_score se non già presente
+        if "parity_score" not in df_hist.columns and "w_superiority" in df_hist.columns and "w_inferiority" in df_hist.columns:
+            def _parse_pct(v):
+                try:
+                    return float(str(v).replace("%", "").strip())
+                except Exception:
+                    return 0.0
+            df_hist["parity_score"] = df_hist.apply(
+                lambda r: round(_parse_pct(r["w_superiority"]) - _parse_pct(r["w_inferiority"]), 1),
+                axis=1,
+            ).apply(lambda x: f"{x:+.1f}pp")
+
+        # Rinomina colonne
+        df_hist = df_hist.rename(columns={
+            "city_code":          "City Code",
+            "week_num":           "Week",
+            "n_stores_total":     "Total Stores",
+            "n_stores_matched":   "Matched",
+            "n_unmatched":        "Unmatched",
+            "n_superiority":      "Superiority",
+            "n_parity":           "Parity",
+            "n_inferiority":      "Inferiority",
+            "pct_superiority":    "Superiority (%)",
+            "pct_parity":         "Parity (%)",
+            "pct_inferiority":    "Inferiority (%)",
+            "w_superiority":      "Superiority (weight)",
+            "w_parity":           "Parity (weight)",
+            "w_inferiority":      "Inferiority (weight)",
+            "city_parity_label":  "City Status",
+            "match_coverage_pct": "Match Coverage",
+            "inserted_at":        "Inserted at",
+            "parity_score":       "Parity Score",
+        })
+
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
     # ---- Breakdown per tipo di promo (#8) ----
