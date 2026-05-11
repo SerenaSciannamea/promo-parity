@@ -61,10 +61,40 @@ $secretsFile = "$proj\secrets.ps1"
 if (Test-Path $secretsFile) { . $secretsFile }
 
 # ===========================================================================
-# STEP 0 — Scarica automaticamente il CSV Glovo da Google Sheets
+# STEP 0a — Verifica che i dati Deliveroo siano aggiornati questa settimana
+#            Se non lo sono, il confronto sarebbe settimane diverse -> abort
 # ===========================================================================
 
-$currentWeek  = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
+$deliverooCsv    = "$proj\output\deliveroo_promo_deduped.csv"
+$currentWeek     = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
+
+# Calcola il lunedì della settimana corrente (inizio settimana ISO)
+$today           = Get-Date
+$dayOfWeek       = [int]$today.DayOfWeek   # 0=Sun, 1=Mon ... 6=Sat
+$daysToMonday    = if ($dayOfWeek -eq 0) { 6 } else { $dayOfWeek - 1 }
+$weekStart       = $today.AddDays(-$daysToMonday).Date
+
+if (Test-Path $deliverooCsv) {
+    $rooModified = (Get-Item $deliverooCsv).LastWriteTime
+    if ($rooModified -lt $weekStart) {
+        $rooAge = "{0:dd/MM/yyyy HH:mm}" -f $rooModified
+        $errMsg = "BLOCCO: deliveroo_promo_deduped.csv non e' aggiornato questa settimana (ultima modifica: $rooAge). Aggiorna prima i dati Deliveroo."
+        Write-Log "ERRORE: $errMsg"
+        Send-Notify -Subject "BLOCCO pipeline $currentWeek — Deliveroo non aggiornato" -Body $errMsg -IsError
+        exit 1
+    }
+    Write-Log "Deliveroo OK: aggiornato il $("{0:dd/MM/yyyy HH:mm}" -f $rooModified)"
+} else {
+    $errMsg = "BLOCCO: deliveroo_promo_deduped.csv non trovato in $deliverooCsv"
+    Write-Log "ERRORE: $errMsg"
+    Send-Notify -Subject "BLOCCO pipeline $currentWeek — file Deliveroo mancante" -Body $errMsg -IsError
+    exit 1
+}
+
+# ===========================================================================
+# STEP 0b — Scarica automaticamente il CSV Glovo da Google Sheets
+# ===========================================================================
+
 $autoGlovoCsv = "$proj\data\glovo_auto_$currentWeek.csv"
 
 if (-not $GlovoCsv) {
