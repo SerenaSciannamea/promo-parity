@@ -40,6 +40,28 @@ PARITY_COLORS = {
 }
 PARITY_ORDER = ["SUPERIORITY", "PARITY", "INFERIORITY", "UNMATCHED"]
 
+
+def _col_config_from_data(
+    df: pd.DataFrame,
+    px_per_char: float = 9.0,
+    min_px: int = 55,
+    max_px: int = 380,
+) -> dict:
+    """
+    Genera column_config con larghezza basata sul contenuto dei dati (non degli header).
+    L'header va a capo automaticamente se più largo della colonna.
+    """
+    cfg = {}
+    for col in df.columns:
+        if df.empty:
+            max_len = 4
+        else:
+            max_len = int(df[col].astype(str).str.len().max())
+        width = int(min(max(max_len * px_per_char + 20, min_px), max_px))
+        cfg[col] = st.column_config.TextColumn(width=width)
+    return cfg
+
+
 st.set_page_config(
     page_title="Promo Parity — Glovo vs Deliveroo",
     page_icon="📊",
@@ -583,7 +605,7 @@ def tab_city_parity(sel_weeks, sel_cities):
         "Store matchati", "# Sup", "# Par", "# Inf",
         "% Sup (revenue)", "% Par (revenue)", "% Inf (revenue)", "Match coverage %"
     ]
-    st.dataframe(disp, use_container_width=True, hide_index=True)
+    st.dataframe(disp, column_config=_col_config_from_data(disp), use_container_width=True, hide_index=True)
 
     # ---- Grouped bar per settimana ----
     if len(sel_weeks) > 1 or len(df["week_num"].unique()) > 1:
@@ -783,6 +805,7 @@ def tab_store_detail(sel_weeks, sel_cities):
 
     st.dataframe(
         disp.style.map(color_parity, subset=["Comparison"]),
+        column_config=_col_config_from_data(disp),
         use_container_width=True,
         hide_index=True,
         height=500,
@@ -1200,7 +1223,7 @@ def tab_trend(sel_weeks, sel_cities):
             "parity_score":       "Parity Score",
         })
 
-        st.dataframe(df_hist, use_container_width=True, hide_index=True)
+        st.dataframe(df_hist, column_config=_col_config_from_data(df_hist), use_container_width=True, hide_index=True)
 
     # ---- Breakdown per tipo di promo (#8) ----
     st.divider()
