@@ -126,10 +126,73 @@ def init_db(conn: sqlite3.Connection) -> None:
             UNIQUE(city_code, store_name, week_num, product_name)
         );
 
+        CREATE TABLE IF NOT EXISTS glovo_products_prime (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            city_code             TEXT NOT NULL,
+            store_name            TEXT NOT NULL,
+            week_num              TEXT NOT NULL,
+            product_name          TEXT,
+            type_of_promo_np      TEXT,
+            has_active_promo_np   TEXT,
+            avg_percentage_off_np REAL,
+            type_of_promo_p       TEXT,
+            has_active_promo_p    TEXT,
+            avg_percentage_off_p  REAL,
+            avg_unit_price        REAL,
+            total_product_sold    REAL,
+            UNIQUE(city_code, store_name, week_num, product_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS store_parity_prime (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            city_code            TEXT NOT NULL,
+            glovo_name           TEXT NOT NULL,
+            deliveroo_name       TEXT,
+            week_num             TEXT NOT NULL,
+            glovo_promo_type     TEXT,
+            glovo_rank           REAL,
+            glovo_rank_label     TEXT,
+            deliveroo_promo_text TEXT,
+            deliveroo_rank       REAL,
+            deliveroo_rank_label TEXT,
+            parity               TEXT,
+            glovo_pct_off        REAL,
+            glovo_promo_products INTEGER,
+            revenue              REAL,
+            promo_coverage_pct   REAL,
+            inserted_at          TEXT DEFAULT (datetime('now')),
+            UNIQUE(city_code, glovo_name, week_num)
+        );
+
+        CREATE TABLE IF NOT EXISTS city_parity_prime (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            city_code           TEXT NOT NULL,
+            week_num            TEXT NOT NULL,
+            n_stores_total      INTEGER,
+            n_stores_matched    INTEGER,
+            n_unmatched         INTEGER,
+            n_superiority       INTEGER,
+            n_parity            INTEGER,
+            n_inferiority       INTEGER,
+            pct_superiority     REAL,
+            pct_parity          REAL,
+            pct_inferiority     REAL,
+            w_superiority       REAL,
+            w_parity            REAL,
+            w_inferiority       REAL,
+            city_parity_label   TEXT,
+            match_coverage_pct  REAL,
+            inserted_at         TEXT DEFAULT (datetime('now')),
+            UNIQUE(city_code, week_num)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_store_week  ON store_parity(week_num);
         CREATE INDEX IF NOT EXISTS idx_store_city  ON store_parity(city_code);
         CREATE INDEX IF NOT EXISTS idx_city_week   ON city_parity(week_num);
         CREATE INDEX IF NOT EXISTS idx_gp_store    ON glovo_products(city_code, store_name, week_num);
+        CREATE INDEX IF NOT EXISTS idx_gpp_store   ON glovo_products_prime(city_code, store_name, week_num);
+        CREATE INDEX IF NOT EXISTS idx_sp_prime_week ON store_parity_prime(week_num);
+        CREATE INDEX IF NOT EXISTS idx_cp_prime_week ON city_parity_prime(week_num);
     """)
     conn.commit()
 
@@ -212,12 +275,16 @@ def run_pipeline(
 
     # ---- 1. Leggi e aggrega Glovo ----
     print(f"\n[1/5] Lettura CSV Glovo: {glovo_csv}")
-    glovo_raw   = load_glovo_csv(str(glovo_csv))
-    glovo_store = aggregate_store_level(glovo_raw)
+    glovo_raw         = load_glovo_csv(str(glovo_csv))
+    glovo_store       = aggregate_store_level(glovo_raw, prime_mode=False)
+    glovo_store_prime = aggregate_store_level(glovo_raw, prime_mode=True)
     # Forza week_num al valore passato (il CSV potrebbe avere settimane diverse)
-    glovo_store["week_num"] = week
-    glovo_raw["week_num"]   = week
-    print(f"      {len(glovo_store)} store Glovo caricati")
+    glovo_store["week_num"]       = week
+    glovo_store_prime["week_num"] = week
+    glovo_raw["week_num"]         = week
+    has_prime_data = "promotion_prime" in glovo_raw.columns
+    print(f"      {len(glovo_store)} store Glovo caricati"
+          f"{'  [prime data disponibile]' if has_prime_data else ''}")
 
     # ---- 2. Leggi Deliveroo deduped ----
     print(f"\n[2/5] Lettura Deliveroo deduped: {DELIVEROO_DEDUPED}")
@@ -296,6 +363,15 @@ def run_pipeline(
     unm  = (store_parity["parity"] == "UNMATCHED").sum()
     print(f"      SUPERIORITY={sup}  PARITY={par}  INFERIORITY={inf}  UNMATCHED={unm}")
 
+    # ---- 5b. Calcola parity Prime (prime-first) ----
+    store_parity_prime = compute_store_parity(glovo_store_prime, deliveroo_df, match_map)
+    city_parity_prime  = compute_city_parity(store_parity_prime)
+
+    sup_p = (store_parity_prime["parity"] == "SUPERIORITY").sum()
+    par_p = (store_parity_prime["parity"] == "PARITY").sum()
+    inf_p = (store_parity_prime["parity"] == "INFERIORITY").sum()
+    print(f"      [Prime] SUPERIORITY={sup_p}  PARITY={par_p}  INFERIORITY={inf_p}")
+
     # ---- Prepara glovo_products (solo colonne utili, solo store in parity) ----
     known_stores = set(zip(store_parity["city_code"], store_parity["glovo_name"]))
     gp_cols = ["city_code", "store_name", "week_num", "product_name",
@@ -309,23 +385,56 @@ def run_pipeline(
         )
     ]
 
+    # ---- Prepara glovo_products_prime (colonne np + p affiancate, solo W20+) ----
+    if has_prime_data:
+        gpp_cols = ["city_code", "store_name", "week_num", "product_name",
+                    "type_of_promo_np", "promo_non_prime",
+                    "percentage_off_np",
+                    "type_of_promo_p", "promotion_prime",
+                    "percentage_off_p",
+                    "avg_unit_price", "total_product_sold"]
+        gpp_cols_present = [c for c in gpp_cols if c in glovo_raw.columns]
+        glovo_products_prime = glovo_raw[gpp_cols_present].copy()
+        glovo_products_prime = glovo_products_prime[
+            glovo_products_prime.apply(
+                lambda r: (r["city_code"], r["store_name"]) in known_stores, axis=1
+            )
+        ]
+        glovo_products_prime = glovo_products_prime.rename(columns={
+            "promo_non_prime":  "has_active_promo_np",
+            "percentage_off_np": "avg_percentage_off_np",
+            "promotion_prime":  "has_active_promo_p",
+            "percentage_off_p": "avg_percentage_off_p",
+        })
+    else:
+        glovo_products_prime = pd.DataFrame()
+
     # ---- Salva nel DB ----
     conn = get_connection(db_path)
     init_db(conn)
-    n1 = upsert_df(conn, "store_parity",   store_parity)
-    n2 = upsert_df(conn, "city_parity",    city_parity)
-    n3 = upsert_df(conn, "glovo_products", glovo_products)
+    n1 = upsert_df(conn, "store_parity",         store_parity)
+    n2 = upsert_df(conn, "city_parity",          city_parity)
+    n3 = upsert_df(conn, "glovo_products",       glovo_products)
+    n4 = upsert_df(conn, "store_parity_prime",   store_parity_prime)
+    n5 = upsert_df(conn, "city_parity_prime",    city_parity_prime)
+    n6 = upsert_df(conn, "glovo_products_prime", glovo_products_prime) if not glovo_products_prime.empty else 0
     conn.close()
     print(f"\n[DB] {n1} store_parity | {n2} city_parity | {n3} glovo_products -> {db_path}")
+    print(f"[DB] {n4} store_parity_prime | {n5} city_parity_prime | {n6} glovo_products_prime (vista Prime)")
 
     # ---- Salva CSV settimanali ----
     if save_csv:
         WEEKLY_DIR.mkdir(parents=True, exist_ok=True)
-        store_path = WEEKLY_DIR / f"store_parity_{week}.csv"
-        city_path  = WEEKLY_DIR / f"city_parity_{week}.csv"
-        store_parity.to_csv(store_path, index=False, encoding="utf-8")
-        city_parity.to_csv(city_path,  index=False, encoding="utf-8")
+        store_path       = WEEKLY_DIR / f"store_parity_{week}.csv"
+        city_path        = WEEKLY_DIR / f"city_parity_{week}.csv"
+        store_prime_path = WEEKLY_DIR / f"store_parity_prime_{week}.csv"
+        city_prime_path  = WEEKLY_DIR / f"city_parity_prime_{week}.csv"
+        store_parity.to_csv(store_path,             index=False, encoding="utf-8")
+        city_parity.to_csv(city_path,               index=False, encoding="utf-8")
+        store_parity_prime.to_csv(store_prime_path, index=False, encoding="utf-8")
+        city_parity_prime.to_csv(city_prime_path,   index=False, encoding="utf-8")
         print(f"[CSV] Salvati: {store_path.name} | {city_path.name}")
+        print(f"[CSV] Salvati: {store_prime_path.name} | {city_prime_path.name}")
 
     # ---- Export su Google Sheets (opzionale) ----
     if sheets_id and sheets_sa:
@@ -349,10 +458,12 @@ def run_pipeline(
                 service_account_info = sheets_sa,
                 store_parity         = store_parity,
                 city_parity          = city_parity,
-                store_mapping        = mapping_df       if len(mapping_df) > 0       else None,
-                needs_review         = review_df        if len(review_df)  > 0       else None,
-                glovo_products       = glovo_products   if len(glovo_products) > 0   else None,
+                store_mapping        = mapping_df            if len(mapping_df) > 0            else None,
+                needs_review         = review_df             if len(review_df)  > 0            else None,
+                glovo_products       = glovo_products        if len(glovo_products) > 0        else None,
                 deliveroo_products   = deliveroo_products,
+                store_parity_prime   = store_parity_prime    if len(store_parity_prime) > 0    else None,
+                city_parity_prime    = city_parity_prime     if len(city_parity_prime)  > 0    else None,
             )
             print(f"[GSheets] Export completato")
         except Exception as e:

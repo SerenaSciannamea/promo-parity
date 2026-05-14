@@ -1,4 +1,4 @@
-# ===========================================================================
+﻿# ===========================================================================
 # run_friday.ps1
 # Pipeline settimanale Promo Parity  —  eseguito ogni venerdi' sera
 #
@@ -30,7 +30,6 @@ function Write-Log {
 function Send-Notify {
     param([string]$Subject, [string]$Body, [switch]$IsError)
     if (-not $emailAppPassword) { return }
-    $errorFlag = if ($IsError) { "--error" } else { "" }
     $notifyArgs = @(
         "-m", "pipeline.notifier",
         "--subject",      $Subject,
@@ -71,7 +70,7 @@ $currentWeek     = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UF
 # Calcola il lunedì della settimana corrente (inizio settimana ISO)
 $today           = Get-Date
 $dayOfWeek       = [int]$today.DayOfWeek   # 0=Sun, 1=Mon ... 6=Sat
-$daysToMonday    = if ($dayOfWeek -eq 0) { 6 } else { $dayOfWeek - 1 }
+if ($dayOfWeek -eq 0) { $daysToMonday = 6 } else { $daysToMonday = $dayOfWeek - 1 }
 $weekStart       = $today.AddDays(-$daysToMonday).Date
 
 if (Test-Path $deliverooCsv) {

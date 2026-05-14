@@ -162,6 +162,26 @@ def _local_city_parity() -> pd.DataFrame:
     return pd.read_sql("SELECT * FROM city_parity ORDER BY week_num, city_code", conn)
 
 
+def _local_store_parity_prime() -> pd.DataFrame:
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    try:
+        return pd.read_sql("SELECT * FROM store_parity_prime ORDER BY week_num, city_code", conn)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _local_city_parity_prime() -> pd.DataFrame:
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    try:
+        return pd.read_sql("SELECT * FROM city_parity_prime ORDER BY week_num, city_code", conn)
+    except Exception:
+        return pd.DataFrame()
+
+
 def _local_review_queue() -> pd.DataFrame:
     p = ROOT / "data" / "needs_review.csv"
     if not p.exists():
@@ -202,6 +222,25 @@ def _local_glovo_products(city_code: str, store_name: str, week_num: str) -> pd.
            ORDER BY has_active_promo DESC, avg_unit_price DESC""",
         conn, params=(city_code, store_name, week_num),
     )
+
+
+def _local_glovo_products_prime(city_code: str, store_name: str, week_num: str) -> pd.DataFrame:
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    try:
+        return pd.read_sql(
+            """SELECT product_name,
+                      type_of_promo_np, has_active_promo_np, avg_percentage_off_np,
+                      type_of_promo_p,  has_active_promo_p,  avg_percentage_off_p,
+                      avg_unit_price, total_product_sold
+               FROM glovo_products_prime
+               WHERE city_code=? AND store_name=? AND week_num=?
+               ORDER BY has_active_promo_p DESC, has_active_promo_np DESC, avg_unit_price DESC""",
+            conn, params=(city_code, store_name, week_num),
+        )
+    except Exception:
+        return pd.DataFrame()
 
 
 def _local_deliveroo_products(city_code: str, restaurant_name: str) -> pd.DataFrame:
@@ -308,6 +347,71 @@ def load_store_parity() -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def load_city_parity() -> pd.DataFrame:
     return _cloud_city_parity() if _is_cloud_mode() else _local_city_parity()
+
+
+@st.cache_data(ttl=300)
+def load_store_parity_prime() -> pd.DataFrame:
+    return _local_store_parity_prime()
+
+
+@st.cache_data(ttl=300)
+def load_city_parity_prime() -> pd.DataFrame:
+    return _local_city_parity_prime()
+
+
+def load_glovo_products_prime(city_code: str, store_name: str, week_num: str) -> pd.DataFrame:
+    """Prodotti Glovo prime per uno store specifico. Non cachato (filtra live)."""
+    return _local_glovo_products_prime(city_code, store_name, week_num)
+
+
+@st.cache_data(ttl=300)
+def load_prime_store_counts() -> pd.DataFrame:
+    """
+    Restituisce (city_code, store_name, week_num) degli store che hanno
+    almeno un prodotto con promo PRIME reale (has_active_promo_p = 'Y').
+    """
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    try:
+        return pd.read_sql(
+            """SELECT DISTINCT city_code, store_name, week_num
+               FROM glovo_products_prime
+               WHERE has_active_promo_p = 'Y'""",
+            conn,
+        )
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_delta_parity() -> pd.DataFrame:
+    """
+    Join store_parity × store_parity_prime: restituisce solo gli store
+    dove il parity cambia tra standard e prime.
+    """
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    try:
+        return pd.read_sql(
+            """SELECT sp.city_code, sp.glovo_name, sp.week_num,
+                      sp.parity               AS standard_parity,
+                      spp.parity              AS prime_parity,
+                      sp.glovo_rank_label     AS standard_promo,
+                      spp.glovo_rank_label    AS prime_promo,
+                      sp.revenue
+               FROM store_parity sp
+               JOIN store_parity_prime spp
+                 ON sp.city_code  = spp.city_code
+                AND sp.glovo_name = spp.glovo_name
+                AND sp.week_num   = spp.week_num
+               WHERE sp.parity != spp.parity
+               ORDER BY sp.week_num DESC, sp.city_code, sp.glovo_name""",
+            conn,
+        )
+    except Exception:
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=300)
@@ -510,23 +614,127 @@ def sidebar() -> tuple[list[str], list[str]]:
 # TAB 1 — City Parity Overview
 # ---------------------------------------------------------------------------
 
-def tab_city_parity(sel_weeks, sel_cities):
-    _icon = ROOT / "assets" / "promoZone.png"
-    if _icon.exists():
-        import base64
-        _b64 = base64.b64encode(_icon.read_bytes()).decode()
-        st.markdown(
-            f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
-                  <img src='data:image/png;base64,{_b64}' style='width:42px;height:42px;object-fit:contain'>
-                  <h2 style='margin:0;padding:0'>City Parity Overview</h2>
-                </div>""",
-            unsafe_allow_html=True,
-        )
+def tab_city_parity(sel_weeks, sel_cities, prime: bool = False):
+    title = "City Parity Overview — Vista Prime" if prime else "City Parity Overview"
+    if prime:
+        st.header(title)
     else:
-        st.header("📊 City Parity Overview")
-    st.caption("Visione sintetica per città e settimana, pesata per fatturato Glovo")
+        _icon = ROOT / "assets" / "promoZone.png"
+        if _icon.exists():
+            import base64
+            _b64 = base64.b64encode(_icon.read_bytes()).decode()
+            st.markdown(
+                f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
+                      <img src='data:image/png;base64,{_b64}' style='width:42px;height:42px;object-fit:contain'>
+                      <h2 style='margin:0;padding:0'>{title}</h2>
+                    </div>""",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.header(f"📊 {title}")
 
-    city_df = load_city_parity()
+    if prime:
+        st.info("★ **Vista Prime**: la promozione Glovo usata è quella **Prime** dove disponibile, "
+                "altrimenti la Non-Prime come fallback. Confronto vs Deliveroo standard.")
+    else:
+        st.caption("Visione sintetica per città e settimana, pesata per fatturato Glovo")
+
+    # [B + F] KPI comparativi Standard vs Prime + Copertura Prime
+    if prime:
+        std_city_df = load_city_parity()
+        if not std_city_df.empty:
+            st.subheader("Standard vs Prime — Confronto KPI")
+            _weeks_for_kpi = sel_weeks if sel_weeks else sorted(std_city_df["week_num"].unique(), reverse=True)[:1]
+            _kpi_week = _weeks_for_kpi[-1] if _weeks_for_kpi else None
+            if _kpi_week:
+                std_w  = std_city_df[std_city_df["week_num"] == _kpi_week]
+                prim_w = load_city_parity_prime()
+                prim_w = prim_w[prim_w["week_num"] == _kpi_week] if not prim_w.empty else pd.DataFrame()
+
+                if sel_cities:
+                    std_w  = std_w[std_w["city_code"].isin(sel_cities)]
+                    prim_w = prim_w[prim_w["city_code"].isin(sel_cities)] if not prim_w.empty else prim_w
+
+                if not std_w.empty and not prim_w.empty:
+                    st.caption(f"Settimana: **{_kpi_week}** — totale città analizzate: {len(std_w)}")
+                    _kpi_col1, _kpi_col2, _kpi_col3 = st.columns(3)
+                    def _kpi_delta(prime_val, std_val, label, fmt="{:.0f}"):
+                        delta = prime_val - std_val
+                        st.metric(
+                            label,
+                            fmt.format(prime_val),
+                            delta=f"{'+' if delta >= 0 else ''}{fmt.format(delta)} vs std",
+                            delta_color="normal",
+                        )
+                    with _kpi_col1:
+                        st.markdown("**🟢 SUPERIORITY**")
+                        _kpi_delta(prim_w["n_superiority"].sum(), std_w["n_superiority"].sum(), "Store (Prime)")
+                        _kpi_delta(prim_w["pct_superiority"].mean(), std_w["pct_superiority"].mean(),
+                                   "% Revenue (Prime)", fmt="{:.1f}%")
+                    with _kpi_col2:
+                        st.markdown("**🟡 PARITY**")
+                        _kpi_delta(prim_w["n_parity"].sum(), std_w["n_parity"].sum(), "Store (Prime)")
+                        _kpi_delta(prim_w["pct_parity"].mean(), std_w["pct_parity"].mean(),
+                                   "% Revenue (Prime)", fmt="{:.1f}%")
+                    with _kpi_col3:
+                        st.markdown("**🔴 INFERIORITY**")
+                        _kpi_delta(prim_w["n_inferiority"].sum(), std_w["n_inferiority"].sum(), "Store (Prime)")
+                        _kpi_delta(prim_w["pct_inferiority"].mean(), std_w["pct_inferiority"].mean(),
+                                   "% Revenue (Prime)", fmt="{:.1f}%")
+                    st.divider()
+
+        # [F] Copertura Prime
+        _sp_prime = load_store_parity_prime()
+        if not _sp_prime.empty:
+            with st.expander("Copertura Promozioni Prime", expanded=False):
+                _sp_f = _sp_prime.copy()
+                if sel_weeks:
+                    _sp_f = _sp_f[_sp_f["week_num"].isin(sel_weeks)]
+                if sel_cities:
+                    _sp_f = _sp_f[_sp_f["city_code"].isin(sel_cities)]
+                if not _sp_f.empty:
+                    _n_total = len(_sp_f)
+
+                    # Store con almeno un prodotto con promo PRIME reale
+                    _prime_stores = load_prime_store_counts()
+                    if not _prime_stores.empty:
+                        _ps = _prime_stores.copy()
+                        if sel_weeks:
+                            _ps = _ps[_ps["week_num"].isin(sel_weeks)]
+                        if sel_cities:
+                            _ps = _ps[_ps["city_code"].isin(sel_cities)]
+                        # Conta store che compaiono anche in _sp_f
+                        _sp_f_keys = set(zip(_sp_f["city_code"], _sp_f["glovo_name"]))
+                        _n_con_prime = _ps[
+                            _ps.apply(lambda r: (r["city_code"], r["store_name"]) in _sp_f_keys, axis=1)
+                        ]["store_name"].nunique()
+                    else:
+                        _n_con_prime = 0
+
+                    _pct_prime = _n_con_prime / _n_total * 100 if _n_total > 0 else 0
+                    _avg_cov   = pd.to_numeric(_sp_f.get("promo_coverage_pct", pd.Series(dtype=float)),
+                                               errors="coerce").mean()
+                    _fc1, _fc2, _fc3 = st.columns(3)
+                    with _fc1:
+                        st.metric("Store con promo Prime reale", f"{_n_con_prime} / {_n_total}",
+                                  delta=f"{_pct_prime:.1f}%")
+                    with _fc2:
+                        st.metric("Copertura promo media (Prime)", f"{_avg_cov:.1f}%" if pd.notna(_avg_cov) else "—")
+                    with _fc3:
+                        _delta_df = load_delta_parity()
+                        if not _delta_df.empty:
+                            _d = _delta_df.copy()
+                            if sel_weeks:
+                                _d = _d[_d["week_num"].isin(sel_weeks)]
+                            if sel_cities:
+                                _d = _d[_d["city_code"].isin(sel_cities)]
+                            st.metric("Store che cambiano parity con Prime", len(_d))
+                        else:
+                            st.metric("Store che cambiano parity con Prime", "—")
+                else:
+                    st.info("Nessun dato per i filtri selezionati.")
+
+    city_df = load_city_parity_prime() if prime else load_city_parity()
     if city_df.empty:
         st.info("Nessun dato disponibile. Esegui la pipeline settimanale.")
         return
@@ -584,7 +792,8 @@ def tab_city_parity(sel_weeks, sel_cities):
         colorbar=dict(title="Score"),
     ))
     fig_heat.update_layout(height=350, margin=dict(t=20, b=20))
-    st.plotly_chart(fig_heat, use_container_width=True)
+    _city_kp = "_p" if prime else ""
+    st.plotly_chart(fig_heat, use_container_width=True, key=f"fig_heat{_city_kp}")
 
     # ---- Tabella dettaglio ----
     st.subheader("Dettaglio per città")
@@ -607,6 +816,74 @@ def tab_city_parity(sel_weeks, sel_cities):
     ]
     st.dataframe(disp, column_config=_col_config_from_data(disp), use_container_width=True, hide_index=True)
 
+    # [A] Delta View: store che cambiano parity Standard → Prime
+    if prime:
+        st.divider()
+        st.subheader("Delta View — Store che cambiano parity con Prime")
+        st.caption("Solo store dove la promozione Prime fa cambiare il risultato rispetto alla vista standard")
+        delta_df = load_delta_parity()
+        if not delta_df.empty:
+            _dd = delta_df.copy()
+            if sel_weeks:
+                _dd = _dd[_dd["week_num"].isin(sel_weeks)]
+            if sel_cities:
+                _dd = _dd[_dd["city_code"].isin(sel_cities)]
+
+            if not _dd.empty:
+                # Filtro per direzione del cambio
+                _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3}
+                _dd["_std_rank"]   = _dd["standard_parity"].map(_parity_rank).fillna(9)
+                _dd["_prime_rank"] = _dd["prime_parity"].map(_parity_rank).fillna(9)
+                _dd["direzione"] = _dd.apply(
+                    lambda r: "⬆️ Migliora" if r["_prime_rank"] < r["_std_rank"] else "⬇️ Peggiora", axis=1
+                )
+                _dir_opts = sorted(_dd["direzione"].unique().tolist())
+                _dir_filter = st.multiselect(
+                    "Filtra direzione", _dir_opts, default=_dir_opts, key="delta_dir_filter"
+                )
+                if _dir_filter:
+                    _dd = _dd[_dd["direzione"].isin(_dir_filter)]
+
+                disp_delta = _dd[["city_code", "glovo_name", "week_num",
+                                   "direzione", "standard_parity", "prime_parity",
+                                   "standard_promo", "prime_promo", "revenue"]].copy()
+                disp_delta["revenue"] = pd.to_numeric(disp_delta["revenue"], errors="coerce") \
+                    .apply(lambda x: f"{x:,.0f}€".replace(",", ".") if pd.notna(x) else "")
+                disp_delta = disp_delta.rename(columns={
+                    "city_code":        "Città",
+                    "glovo_name":       "Store Glovo",
+                    "week_num":         "Settimana",
+                    "direzione":        "Direzione",
+                    "standard_parity":  "Parity Standard",
+                    "prime_parity":     "Parity Prime",
+                    "standard_promo":   "Promo Standard",
+                    "prime_promo":      "Promo Prime",
+                    "revenue":          "Revenue",
+                })
+                def _color_delta(val):
+                    if "Migliora" in str(val):
+                        return "background-color:#d9d2e9;color:#9900ff"
+                    if "Peggiora" in str(val):
+                        return "background-color:#fee2e2;color:#991b1b"
+                    return ""
+                def _color_parity_cell(v):
+                    c = PARITY_COLORS.get(v, "")
+                    return f"background-color: {c}; color: white" if c else ""
+
+                st.dataframe(
+                    disp_delta.style.map(_color_delta, subset=["Direzione"])
+                              .map(_color_parity_cell, subset=["Parity Standard", "Parity Prime"]),
+                    column_config=_col_config_from_data(disp_delta),
+                    use_container_width=True, hide_index=True,
+                )
+                st.caption(f"{len(disp_delta)} store con cambio parity — "
+                           f"{(disp_delta['Direzione'].str.contains('Migliora')).sum()} migliorano, "
+                           f"{(disp_delta['Direzione'].str.contains('Peggiora')).sum()} peggiorano")
+            else:
+                st.info("Nessun store cambia parity con Prime per i filtri selezionati.")
+        else:
+            st.info("Dati delta non disponibili. Esegui la pipeline con CSV W20+.")
+
     # ---- Grouped bar per settimana ----
     if len(sel_weeks) > 1 or len(df["week_num"].unique()) > 1:
         st.subheader("Composizione parity per città (settimana più recente)")
@@ -628,30 +905,37 @@ def tab_city_parity(sel_weeks, sel_cities):
             barmode="stack",
         )
         fig_bar.update_layout(height=350, margin=dict(t=20))
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, use_container_width=True, key=f"fig_bar{_city_kp}")
 
 
 # ---------------------------------------------------------------------------
 # TAB 2 — Store Detail
 # ---------------------------------------------------------------------------
 
-def tab_store_detail(sel_weeks, sel_cities):
+def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
     import base64 as _b64mod
     _icon = ROOT / "assets" / "storePhone.png"
-    if _icon.exists():
-        _b64 = _b64mod.b64encode(_icon.read_bytes()).decode()
-        st.markdown(
-            f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
-                  <img src='data:image/png;base64,{_b64}' style='width:42px;height:42px;object-fit:contain'>
-                  <h2 style='margin:0;padding:0'>Store Detail</h2>
-                </div>""",
-            unsafe_allow_html=True,
-        )
+    if not prime:
+        title_suffix = ""
+        if _icon.exists():
+            _b64 = _b64mod.b64encode(_icon.read_bytes()).decode()
+            st.markdown(
+                f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
+                      <img src='data:image/png;base64,{_b64}' style='width:42px;height:42px;object-fit:contain'>
+                      <h2 style='margin:0;padding:0'>Store Detail</h2>
+                    </div>""",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.header("🏪 Store Detail")
     else:
-        st.header("🏪 Store Detail")
-    st.caption("Analisi per singolo store: promo Glovo vs Deliveroo, rank e copertura")
+        # Nel tab Prime il titolo grande è già mostrato da tab_city_parity sopra
+        st.subheader("Drill-down Store — Vista Prime")
 
-    store_df = load_store_parity()
+    if not prime:
+        st.caption("Analisi per singolo store: promo Glovo vs Deliveroo, rank e copertura")
+
+    store_df = load_store_parity_prime() if prime else load_store_parity()
     if store_df.empty:
         st.info("Nessun dato disponibile.")
         return
@@ -682,16 +966,18 @@ def tab_store_detail(sel_weeks, sel_cities):
         return
 
     # Filtri aggiuntivi
+    _kp = "_p" if prime else ""   # key prefix per evitare conflitti widget standard vs prime
     col1, col2, col3 = st.columns(3)
     with col1:
         parity_filter = st.multiselect(
             "Parity", PARITY_ORDER, default=PARITY_ORDER,
-            key="store_parity_filter"
+            key=f"store_parity_filter{_kp}"
         )
     with col2:
-        search = st.text_input("Cerca store (nome Glovo)", "")
+        search = st.text_input("Cerca store (nome Glovo)", "", key=f"store_search{_kp}")
     with col3:
-        sort_by = st.selectbox("Ordina per", ["revenue", "parity", "glovo_rank"], index=0)
+        sort_by = st.selectbox("Ordina per", ["revenue", "parity", "glovo_rank"], index=0,
+                               key=f"store_sortby{_kp}")
 
     col4, col5 = st.columns(2)
     with col4:
@@ -699,14 +985,14 @@ def tab_store_detail(sel_weeks, sel_cities):
             if "glovo_rank_label" in df.columns else []
         glovo_promo_filter = st.multiselect(
             "Promo Glovo", glovo_promo_opts, default=[],
-            placeholder="Tutte", key="store_glovo_promo_filter"
+            placeholder="Tutte", key=f"store_glovo_promo_filter{_kp}"
         )
     with col5:
         roo_promo_opts = sorted(df["deliveroo_rank_label"].replace("", pd.NA).dropna().unique().tolist()) \
             if "deliveroo_rank_label" in df.columns else []
         roo_promo_filter = st.multiselect(
             "Promo Deliveroo", roo_promo_opts, default=[],
-            placeholder="Tutte", key="store_roo_promo_filter"
+            placeholder="Tutte", key=f"store_roo_promo_filter{_kp}"
         )
 
     if parity_filter:
@@ -753,6 +1039,30 @@ def tab_store_detail(sel_weeks, sel_cities):
     available = [c for c in display_cols if c in df_sorted.columns]
     disp = df_sorted[available].copy()
 
+    # [C] Badge Prime Boost — colonna aggiuntiva quando prime=True
+    if prime:
+        _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3}
+        _std_df = load_store_parity()
+        if not _std_df.empty and sel_weeks:
+            _std_filtered = _std_df[_std_df["week_num"].isin(sel_weeks)]
+        else:
+            _std_filtered = _std_df
+        _std_map = _std_filtered.set_index(["city_code", "glovo_name"])["parity"].to_dict() \
+                   if not _std_filtered.empty else {}
+        def _boost_label(row):
+            key = (row.get("city_code", ""), row.get("glovo_name", ""))
+            std_p = _std_map.get(key, "")
+            prime_p = row.get("parity", "")
+            sr = _parity_rank.get(std_p, 9)
+            pr = _parity_rank.get(prime_p, 9)
+            if pr < sr:
+                return "🚀 Boost"
+            if pr > sr:
+                return "⬇️ Drop"
+            return ""
+        disp.insert(disp.columns.get_loc("parity"), "prime_boost",
+                    df_sorted.apply(_boost_label, axis=1).values)
+
     # Formatta colonne numeriche
     if "glovo_pct_off" in disp.columns:
         disp["glovo_pct_off"] = pd.to_numeric(disp["glovo_pct_off"], errors="coerce") \
@@ -782,6 +1092,7 @@ def tab_store_detail(sel_weeks, sel_cities):
         "glovo_name":              "Glovo Restaurant",
         "deliveroo_name":          "Deliveroo Restaurant",
         "week_num":                "Week",
+        "prime_boost":             "★ Prime",
         "parity":                  "Comparison",
         "glovo_rank_label":        "Glovo Promo Type",
         "glovo_pct_off":           "Glovo % OFF",
@@ -817,7 +1128,8 @@ def tab_store_detail(sel_weeks, sel_cities):
     st.subheader("Drill-down store")
 
     store_names = sorted(df["glovo_name"].unique())
-    sel_store   = st.selectbox("Seleziona store", ["— seleziona —"] + store_names)
+    sel_store   = st.selectbox("Seleziona store", ["— seleziona —"] + store_names,
+                               key=f"store_sel{_kp}")
 
     if sel_store != "— seleziona —":
         # Filtra per città dallo stesso df filtrato (evita ambiguità tra store con stesso nome in città diverse)
@@ -829,9 +1141,26 @@ def tab_store_detail(sel_weeks, sel_cities):
             (store_df["city_code"] == store_city if store_city else True)
         ].sort_values("week_num")
 
+        # "latest" = settimana selezionata nel filtro (o la più recente disponibile)
+        store_data_in_filter = store_data[store_data["week_num"].isin(sel_weeks)] if sel_weeks else store_data
+        latest_src = store_data_in_filter if not store_data_in_filter.empty else store_data
+
+        # [C] Nel drill-down prime: mostra standard vs prime affiancati
+        if prime:
+            _std_all = load_store_parity()
+            _std_store = _std_all[
+                (_std_all["glovo_name"] == sel_store) &
+                (_std_all["city_code"] == store_city if store_city else True)
+            ].sort_values("week_num")
+            _std_in_filter = _std_store[_std_store["week_num"].isin(sel_weeks)] if sel_weeks else _std_store
+            _std_latest_src = _std_in_filter if not _std_in_filter.empty else _std_store
+            _std_latest = _std_latest_src.iloc[-1] if not _std_latest_src.empty else None
+        else:
+            _std_latest = None
+
         c1, c2 = st.columns(2)
         with c1:
-            latest = store_data.iloc[-1]
+            latest = latest_src.iloc[-1]
             st.metric("Parity attuale", parity_badge(latest["parity"]))
             st.metric("Glovo promo", latest.get("glovo_rank_label", "—"))
             st.metric("Deliveroo promo", latest.get("deliveroo_rank_label", "—"))
@@ -840,8 +1169,23 @@ def tab_store_detail(sel_weeks, sel_cities):
             st.metric("Prodotti in promo", int(latest.get("glovo_promo_products", 0)))
             st.metric("Copertura promo", f"{latest.get('promo_coverage_pct', 0):.1f}%")
 
+        # [C] Badge confronto Standard vs Prime nel drill-down
+        if prime and _std_latest is not None:
+            _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3}
+            _std_p   = str(_std_latest.get("parity", ""))
+            _prime_p = str(latest.get("parity", ""))
+            _sr = _parity_rank.get(_std_p, 9)
+            _pr = _parity_rank.get(_prime_p, 9)
+            if _pr < _sr:
+                _boost_msg = f"🚀 **Prime Boost**: parity migliora da {parity_badge(_std_p)} → {parity_badge(_prime_p)}"
+            elif _pr > _sr:
+                _boost_msg = f"⬇️ **Prime Drop**: parity peggiora da {parity_badge(_std_p)} → {parity_badge(_prime_p)}"
+            else:
+                _boost_msg = f"↔️ **Invariato**: parity {parity_badge(_prime_p)} uguale con e senza Prime"
+            st.markdown(_boost_msg, unsafe_allow_html=True)
+
         # ---- Trend parity ultime 4 settimane (#9) ----
-        store_all_hist = load_store_parity()
+        store_all_hist = load_store_parity_prime() if prime else load_store_parity()
         store_trend = (
             store_all_hist[
                 (store_all_hist["glovo_name"] == sel_store) &
@@ -879,7 +1223,7 @@ def tab_store_detail(sel_weeks, sel_cities):
                 plot_bgcolor="white",
                 paper_bgcolor="white",
             )
-            st.plotly_chart(trend_fig, use_container_width=True)
+            st.plotly_chart(trend_fig, use_container_width=True, key=f"trend_fig{_kp}")
 
         if len(store_data) > 1:
             fig_store = px.line(
@@ -889,7 +1233,7 @@ def tab_store_detail(sel_weeks, sel_cities):
             )
             fig_store.update_yaxes(autorange="reversed", dtick=1)
             fig_store.update_layout(height=280, margin=dict(t=40))
-            st.plotly_chart(fig_store, use_container_width=True)
+            st.plotly_chart(fig_store, use_container_width=True, key=f"fig_store{_kp}")
 
         # ---- Confronto prodotti ----
         st.divider()
@@ -914,7 +1258,14 @@ def tab_store_detail(sel_weeks, sel_cities):
         gp = load_glovo_products(city_code, sel_store, week_nm)
         dp = load_deliveroo_products(city_code, deliveroo_nm)
 
-        col_g, col_d = st.columns(2)
+        # [E] Vista Prime: carica anche i dati prime per colonna aggiuntiva
+        if prime:
+            gpp = load_glovo_products_prime(city_code, sel_store, week_nm)
+            col_g, col_prime, col_d = st.columns([2, 2, 2])
+        else:
+            gpp = pd.DataFrame()
+            col_g, col_d = st.columns(2)
+            col_prime = None
 
         # Badge loghi Glovo / Deliveroo
         _glovo_logo  = ROOT / "assets" / "glovo.png"
@@ -978,6 +1329,75 @@ def tab_store_detail(sel_weeks, sel_cities):
                     height=350,
                 )
 
+        # ---- [E] Colonna Prime (solo tab prime) ----
+        if prime and col_prime is not None:
+            with col_prime:
+                st.markdown(
+                    "<div style='display:inline-flex;align-items:center;gap:8px;"
+                    "background:#7c3aed;color:white;padding:5px 14px;"
+                    "border-radius:8px;font-weight:700;font-size:1rem'>"
+                    "★ Glovo Prime</div>",
+                    unsafe_allow_html=True,
+                )
+                st.write("")
+                if gpp.empty:
+                    st.info("Dati prodotti Prime non disponibili.\nEsegui la pipeline con CSV W20+.")
+                else:
+                    def _prime_promo_badge(row):
+                        if str(row.get("has_active_promo_p", "N")).upper() == "Y":
+                            t = row.get("type_of_promo_p", "") or ""
+                            pct = row.get("avg_percentage_off_p")
+                            try:
+                                pct = float(pct)
+                            except (TypeError, ValueError):
+                                pct = 0
+                            if pct and pct > 0:
+                                return f"⭐ {t} ({pct:.0f}%)"
+                            return f"⭐ {t}" if t else "⭐ Prime"
+                        elif str(row.get("has_active_promo_np", "N")).upper() == "Y":
+                            t = row.get("type_of_promo_np", "") or ""
+                            pct = row.get("avg_percentage_off_np")
+                            try:
+                                pct = float(pct)
+                            except (TypeError, ValueError):
+                                pct = 0
+                            if pct and pct > 0:
+                                return f"✅ {t} ({pct:.0f}%) [np]"
+                            return f"✅ {t} [np]" if t else "✅ Promo [np]"
+                        return "—"
+
+                    disp_pp = gpp.copy()
+                    disp_pp["promozione"] = disp_pp.apply(_prime_promo_badge, axis=1)
+                    if "avg_unit_price" in disp_pp.columns:
+                        disp_pp["avg_unit_price"] = pd.to_numeric(disp_pp["avg_unit_price"], errors="coerce") \
+                            .apply(lambda x: f"{x:.1f}€" if pd.notna(x) else "")
+                    disp_pp = disp_pp.rename(columns={
+                        "product_name": "Prodotto",
+                        "avg_unit_price": "Prezzo €",
+                        "total_product_sold": "Qtà venduta",
+                    })
+                    show_pp = ["Prodotto", "promozione", "Prezzo €", "Qtà venduta"]
+                    show_pp = [c for c in show_pp if c in disp_pp.columns]
+                    n_prime = (gpp.get("has_active_promo_p", pd.Series(dtype=str)).str.upper() == "Y").sum()
+                    n_np    = (gpp.get("has_active_promo_np", pd.Series(dtype=str)).str.upper() == "Y").sum()
+                    st.caption(f"{len(gpp)} prodotti · {n_prime} ⭐ prime · {n_np} ✅ non-prime")
+                    st.dataframe(
+                        disp_pp[show_pp].style.apply(
+                            lambda row: [
+                                "background-color:#ede9fe;color:#4c1d95"
+                                if str(gpp.loc[row.name, "has_active_promo_p"]).upper() == "Y"
+                                else "background-color:#FFF8D0;color:#7a6300"
+                                if str(gpp.loc[row.name, "has_active_promo_np"]).upper() == "Y"
+                                else ""
+                                for _ in row
+                            ],
+                            axis=1,
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=350,
+                    )
+
         # ---- Deliveroo ----
         with col_d:
             if _b64_roo:
@@ -995,7 +1415,23 @@ def tab_store_detail(sel_weeks, sel_cities):
             if not deliveroo_nm:
                 st.info("Store non matchato con Deliveroo.\nAssegna un match nel tab Store Matching.")
             elif dp.empty:
-                st.info("Dati prodotti Deliveroo non ancora disponibili.\nVerranno caricati al prossimo run della pipeline.")
+                roo_promo_text = str(latest.get("deliveroo_promo_text", "")).strip()
+                roo_rank_label = str(latest.get("deliveroo_rank_label", "")).strip()
+                if roo_promo_text and roo_promo_text not in ("", "nan", "Nessuna promo"):
+                    # Promo esiste a livello ristorante ma non sono disponibili dettagli prodotto
+                    # (es. 2x1 e consegna gratis non hanno prodotti specifici da elencare)
+                    st.markdown(
+                        f"<div style='background:#e0f7f4;border-left:4px solid #00CCBC;"
+                        f"padding:12px 16px;border-radius:6px;margin-top:4px'>"
+                        f"<b>Promozione rilevata:</b> {roo_promo_text}<br>"
+                        f"<span style='color:#444;font-size:0.88em'>Il tipo di promo "
+                        f"(<em>{roo_rank_label}</em>) si applica al ristorante nel suo complesso — "
+                        f"non sono disponibili dettagli per singolo prodotto.</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.info("Nessuna promozione Deliveroo rilevata per questo store.")
             else:
                 disp_d = dp.copy()
                 disp_d = disp_d.rename(columns={
@@ -1540,6 +1976,7 @@ def main():
     _b64_store    = _icon_b64("storePhone.png")
     _b64_trend    = _icon_b64("growth.png")
     _b64_matching = _icon_b64("twoBagsYellowCheck.png")
+    _b64_prime    = _icon_b64("isotypeCoinsLoyalty.png")
 
     _css_tabs = """<style>
     /* ── Montserrat font ── */
@@ -1599,14 +2036,23 @@ def main():
             background-size:contain; background-repeat:no-repeat;
             vertical-align:middle; margin-right:5px;
         }}"""
+    if _b64_prime:
+        _css_tabs += f"""
+        div[data-testid="stTabs"] button[role="tab"]:nth-child(5)::before {{
+            content:''; display:inline-block; width:20px; height:20px;
+            background-image:url('data:image/png;base64,{_b64_prime}');
+            background-size:contain; background-repeat:no-repeat;
+            vertical-align:middle; margin-right:5px;
+        }}"""
     _css_tabs += "</style>"
     st.markdown(_css_tabs, unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "City Parity",
         "Store Detail",
         "Trend",
         "Store Matching",
+        "Prime",
     ])
 
     with tab1:
@@ -1617,6 +2063,10 @@ def main():
         tab_trend(sel_weeks, sel_cities)
     with tab4:
         tab_store_matching()
+    with tab5:
+        tab_city_parity(sel_weeks, sel_cities, prime=True)
+        st.divider()
+        tab_store_detail(sel_weeks, sel_cities, prime=True)
 
 
 if __name__ == "__main__":

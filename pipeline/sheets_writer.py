@@ -42,6 +42,8 @@ TAB_STORE_MAPPING      = "store_mapping"
 TAB_NEEDS_REVIEW       = "needs_review"
 TAB_GLOVO_PRODUCTS     = "glovo_products"
 TAB_DELIVEROO_PRODUCTS = "deliveroo_products"
+TAB_STORE_PARITY_PRIME = "store_parity_prime"
+TAB_CITY_PARITY_PRIME  = "city_parity_prime"
 
 
 def _get_client(service_account_info: dict | str | Path) -> "gspread.Client":
@@ -151,6 +153,8 @@ def export_to_sheets(
     needs_review:  pd.DataFrame | None = None,
     glovo_products: pd.DataFrame | None = None,
     deliveroo_products: pd.DataFrame | None = None,
+    store_parity_prime: pd.DataFrame | None = None,
+    city_parity_prime:  pd.DataFrame | None = None,
 ) -> dict[str, int]:
     """
     Esporta i DataFrame su Google Sheets.
@@ -210,5 +214,17 @@ def export_to_sheets(
         n = _replace_sheet(sheet, TAB_DELIVEROO_PRODUCTS, deliveroo_products[dp_cols_present])
         result[TAB_DELIVEROO_PRODUCTS] = n
         print(f"[sheets_writer] deliveroo_products: {n} righe scritte")
+
+    if store_parity_prime is not None and len(store_parity_prime) > 0:
+        ws = _get_or_create_worksheet(sheet, TAB_STORE_PARITY_PRIME, store_parity_prime.columns.tolist())
+        n  = _upsert_sheet(ws, store_parity_prime, key_cols=["city_code", "glovo_name", "week_num"])
+        result[TAB_STORE_PARITY_PRIME] = n
+        print(f"[sheets_writer] store_parity_prime: {n} righe scritte")
+
+    if city_parity_prime is not None and len(city_parity_prime) > 0:
+        ws = _get_or_create_worksheet(sheet, TAB_CITY_PARITY_PRIME, city_parity_prime.columns.tolist())
+        n  = _upsert_sheet(ws, city_parity_prime, key_cols=["city_code", "week_num"])
+        result[TAB_CITY_PARITY_PRIME] = n
+        print(f"[sheets_writer] city_parity_prime: {n} righe scritte")
 
     return result
