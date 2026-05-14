@@ -32,6 +32,8 @@ TAB_NEEDS_REVIEW       = "needs_review"
 TAB_MANUAL_MATCHES     = "manual_matches"      # append-only, scritto dall'UI
 TAB_GLOVO_PRODUCTS     = "glovo_products"
 TAB_DELIVEROO_PRODUCTS = "deliveroo_products"
+TAB_STORE_PARITY_PRIME = "store_parity_prime"
+TAB_CITY_PARITY_PRIME  = "city_parity_prime"
 
 MANUAL_COLS = [
     "city_code", "glovo_name", "glovo_store_id",
@@ -183,11 +185,29 @@ def read_all(
 
     glovo_products     = _read_tab(sheet, TAB_GLOVO_PRODUCTS)
     deliveroo_products = _read_tab(sheet, TAB_DELIVEROO_PRODUCTS)
+    store_parity_prime = _read_tab(sheet, TAB_STORE_PARITY_PRIME)
+    city_parity_prime  = _read_tab(sheet, TAB_CITY_PARITY_PRIME)
 
     # Cast numerici prodotti Glovo
     for col in ["avg_percentage_off", "avg_unit_price", "total_product_sold"]:
         if col in glovo_products.columns:
             glovo_products[col] = pd.to_numeric(glovo_products[col], errors="coerce")
+
+    # Cast numerici Prime
+    prime_num_cols = ["glovo_rank", "deliveroo_rank", "glovo_pct_off",
+                      "glovo_promo_products", "revenue", "promo_coverage_pct"]
+    for col in prime_num_cols:
+        if col in store_parity_prime.columns:
+            store_parity_prime[col] = pd.to_numeric(store_parity_prime[col], errors="coerce")
+
+    city_prime_num_cols = ["n_stores_total", "n_stores_matched", "n_unmatched",
+                           "n_superiority", "n_parity", "n_inferiority",
+                           "pct_superiority", "pct_parity", "pct_inferiority",
+                           "w_superiority", "w_parity", "w_inferiority",
+                           "match_coverage_pct"]
+    for col in city_prime_num_cols:
+        if col in city_parity_prime.columns:
+            city_parity_prime[col] = pd.to_numeric(city_parity_prime[col], errors="coerce")
 
     return {
         TAB_STORE_PARITY:       store_parity,
@@ -196,6 +216,8 @@ def read_all(
         TAB_NEEDS_REVIEW:       needs_review,
         TAB_GLOVO_PRODUCTS:     glovo_products,
         TAB_DELIVEROO_PRODUCTS: deliveroo_products,
+        TAB_STORE_PARITY_PRIME: store_parity_prime,
+        TAB_CITY_PARITY_PRIME:  city_parity_prime,
     }
 
 

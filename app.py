@@ -324,6 +324,14 @@ def _cloud_deliveroo_products() -> pd.DataFrame:
     return _cloud_load_all().get("deliveroo_products", pd.DataFrame())
 
 
+def _cloud_store_parity_prime() -> pd.DataFrame:
+    return _cloud_load_all().get("store_parity_prime", pd.DataFrame())
+
+
+def _cloud_city_parity_prime() -> pd.DataFrame:
+    return _cloud_load_all().get("city_parity_prime", pd.DataFrame())
+
+
 def _cloud_deliveroo_names() -> dict[str, list[str]]:
     """Nel cloud usiamo i nomi Deliveroo gia' presenti nel store_parity."""
     sp = _cloud_store_parity()
@@ -351,12 +359,12 @@ def load_city_parity() -> pd.DataFrame:
 
 @st.cache_data(ttl=300)
 def load_store_parity_prime() -> pd.DataFrame:
-    return _local_store_parity_prime()
+    return _cloud_store_parity_prime() if _is_cloud_mode() else _local_store_parity_prime()
 
 
 @st.cache_data(ttl=300)
 def load_city_parity_prime() -> pd.DataFrame:
-    return _local_city_parity_prime()
+    return _cloud_city_parity_prime() if _is_cloud_mode() else _local_city_parity_prime()
 
 
 def load_glovo_products_prime(city_code: str, store_name: str, week_num: str) -> pd.DataFrame:
@@ -369,7 +377,23 @@ def load_prime_store_counts() -> pd.DataFrame:
     """
     Restituisce (city_code, store_name, week_num) degli store che hanno
     almeno un prodotto con promo PRIME reale (has_active_promo_p = 'Y').
+    In cloud mode: derivato da store_parity_prime (colonna glovo_rank_label non vuota
+    e proveniente da dati prime, oppure flaggato in futuro).
+    In locale: legge da glovo_products_prime via SQLite.
     """
+    if _is_cloud_mode():
+        # In cloud non abbiamo glovo_products_prime su Sheets;
+        # usiamo store_parity_prime come proxy: store con promo_coverage_pct > 0
+        spp = _cloud_store_parity_prime()
+        if spp.empty:
+            return pd.DataFrame()
+        has_prime = spp[
+            pd.to_numeric(spp.get("promo_coverage_pct", pd.Series(dtype=float)),
+                          errors="coerce").fillna(0) > 0
+        ][["city_code", "glovo_name", "week_num"]].copy()
+        has_prime = has_prime.rename(columns={"glovo_name": "store_name"})
+        return has_prime.drop_duplicates()
+
     conn = _get_sqlite_conn()
     if conn is None:
         return pd.DataFrame()
@@ -390,6 +414,33 @@ def load_delta_parity() -> pd.DataFrame:
     Join store_parity × store_parity_prime: restituisce solo gli store
     dove il parity cambia tra standard e prime.
     """
+    if _is_cloud_mode():
+        sp  = _cloud_store_parity()
+        spp = _cloud_store_parity_prime()
+        if sp.empty or spp.empty:
+            return pd.DataFrame()
+        merged = sp.merge(
+            spp[["city_code", "glovo_name", "week_num", "parity",
+                 "glovo_rank_label"]].rename(columns={
+                     "parity":          "prime_parity",
+                     "glovo_rank_label":"prime_promo",
+                 }),
+            on=["city_code", "glovo_name", "week_num"],
+            how="inner",
+        )
+        merged = merged.rename(columns={
+            "parity":          "standard_parity",
+            "glovo_rank_label":"standard_promo",
+        })
+        delta = merged[merged["standard_parity"] != merged["prime_parity"]].copy()
+        cols = ["city_code", "glovo_name", "week_num",
+                "standard_parity", "prime_parity",
+                "standard_promo",  "prime_promo", "revenue"]
+        cols_present = [c for c in cols if c in delta.columns]
+        return delta[cols_present].sort_values(
+            ["week_num", "city_code", "glovo_name"], ascending=[False, True, True]
+        )
+
     conn = _get_sqlite_conn()
     if conn is None:
         return pd.DataFrame()
