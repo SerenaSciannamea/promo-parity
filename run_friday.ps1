@@ -83,6 +83,52 @@ if (Test-Path $deliverooCsv) {
         exit 1
     }
     Write-Log "Deliveroo OK: aggiornato il $("{0:dd/MM/yyyy HH:mm}" -f $rooModified)"
+
+    # -----------------------------------------------------------------------
+    # Verifica copertura città: tutte le city code Glovo devono avere dati Deliveroo
+    # -----------------------------------------------------------------------
+    $expectedCities = @("BAR","BOL","CAT","FIR","MIL","NAP","PAD","PMO","QTC","ROM","TOR","VER")
+
+    $foundCities = & $venv -c @"
+import pandas as pd, sys
+try:
+    df = pd.read_csv(r'$deliverooCsv', dtype=str, usecols=['city_code']).fillna('')
+    cities = sorted(df['city_code'].str.strip().str.upper().unique().tolist())
+    print(','.join(cities))
+except Exception as e:
+    print('ERROR:' + str(e), file=sys.stderr)
+    sys.exit(1)
+"@
+
+    $foundList   = $foundCities -split ","
+    $missingList = $expectedCities | Where-Object { $_ -notin $foundList }
+
+    if ($missingList.Count -gt 0) {
+        $missingStr = $missingList -join ", "
+        Write-Log "ATTENZIONE: città Deliveroo mancanti: $missingStr"
+
+        Write-Host ""
+        Write-Host "============================================================" -ForegroundColor Yellow
+        Write-Host " ATTENZIONE — Città senza dati Deliveroo: $missingStr" -ForegroundColor Yellow
+        Write-Host " La pipeline produrra' risultati parziali per queste citta'." -ForegroundColor Yellow
+        Write-Host " Premi INVIO per continuare comunque, oppure Ctrl+C per annullare." -ForegroundColor Yellow
+        Write-Host "============================================================" -ForegroundColor Yellow
+        Write-Host ""
+
+        try {
+            $null = Read-Host "Premi INVIO per continuare"
+        } catch {
+            # In esecuzione non interattiva (es. Task Scheduler): logga e prosegui
+            Write-Log "Esecuzione non interattiva: pipeline continua nonostante citta' mancanti ($missingStr)"
+        }
+
+        # Invia notifica email di avviso (non blocca)
+        $warnBody = "Attenzione: le seguenti citta' non hanno dati Deliveroo per $currentWeek e saranno escluse dal confronto prodotti:`n`n$missingStr`n`nLo scraper potrebbe aver girato troppo presto. Valuta di riscrapare e ripetere la pipeline."
+        Send-Notify -Subject "AVVISO pipeline $currentWeek — citta' Deliveroo mancanti" -Body $warnBody
+    } else {
+        Write-Log "Copertura Deliveroo completa: $($foundList -join ', ')"
+    }
+
 } else {
     $errMsg = "BLOCCO: deliveroo_promo_deduped.csv non trovato in $deliverooCsv"
     Write-Log "ERRORE: $errMsg"
