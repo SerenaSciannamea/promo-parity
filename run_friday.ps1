@@ -52,7 +52,7 @@ Write-Log "===== Avvio pipeline Promo Parity ====="
 $todayStr = Get-Date -Format "yyyy-MM-dd"
 if (Test-Path $log) {
     $alreadyRan = Select-String -Path $log -Pattern "Pipeline completata con successo" |
-                  Where-Object { $_.Line -like "*[$todayStr*" } |
+                  Where-Object { $_.Line -match [regex]::Escape("[$todayStr") } |
                   Select-Object -First 1
     if ($alreadyRan -and -not $Force) {
         Write-Log "Pipeline già completata oggi ($todayStr) — skip. Usa -Force per forzare il rieseguo."
