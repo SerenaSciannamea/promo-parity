@@ -8,7 +8,8 @@
 # ===========================================================================
 param(
     [string]$GlovoCsv = "",
-    [string]$Week     = ""
+    [string]$Week     = "",
+    [switch]$Force              # Forza il rieseguo anche se già girata oggi
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,6 +47,20 @@ function Send-Notify {
 Write-Log "===== Avvio pipeline Promo Parity ====="
 
 # ===========================================================================
+# CHECK — Già girata oggi? (evita doppi run schedulati)
+# ===========================================================================
+$todayStr = Get-Date -Format "yyyy-MM-dd"
+if (Test-Path $log) {
+    $alreadyRan = Select-String -Path $log -Pattern "Pipeline completata con successo" |
+                  Where-Object { $_.Line -like "*[$todayStr*" } |
+                  Select-Object -First 1
+    if ($alreadyRan -and -not $Force) {
+        Write-Log "Pipeline già completata oggi ($todayStr) — skip. Usa -Force per forzare il rieseguo."
+        exit 0
+    }
+}
+
+# ===========================================================================
 # CONFIGURAZIONE
 # ===========================================================================
 
@@ -75,14 +90,13 @@ $weekStart       = $today.AddDays(-$daysToMonday).Date
 
 if (Test-Path $deliverooCsv) {
     $rooModified = (Get-Item $deliverooCsv).LastWriteTime
+    $rooAge      = "{0:dd/MM/yyyy HH:mm}" -f $rooModified
     if ($rooModified -lt $weekStart) {
-        $rooAge = "{0:dd/MM/yyyy HH:mm}" -f $rooModified
-        $errMsg = "BLOCCO: deliveroo_promo_deduped.csv non e' aggiornato questa settimana (ultima modifica: $rooAge). Aggiorna prima i dati Deliveroo."
-        Write-Log "ERRORE: $errMsg"
-        Send-Notify -Subject "BLOCCO pipeline $currentWeek — Deliveroo non aggiornato" -Body $errMsg -IsError
-        exit 1
+        Write-Log "AVVISO: deliveroo_promo_deduped.csv non e' di questa settimana (ultima modifica: $rooAge). La pipeline continuera' con i dati disponibili."
+        Send-Notify -Subject "AVVISO pipeline $currentWeek — Deliveroo settimana precedente" -Body "Il file Deliveroo risale a $rooAge (settimana precedente). La pipeline e' partita comunque."
+    } else {
+        Write-Log "Deliveroo OK: aggiornato il $rooAge"
     }
-    Write-Log "Deliveroo OK: aggiornato il $("{0:dd/MM/yyyy HH:mm}" -f $rooModified)"
 
     # -----------------------------------------------------------------------
     # Verifica copertura città: tutte le city code Glovo devono avere dati Deliveroo
