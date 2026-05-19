@@ -338,11 +338,20 @@ def wait_for_menu_content(driver: webdriver.Chrome, timeout: int) -> None:
 
 
 def scroll_and_click_load_more(driver: webdriver.Chrome, max_clicks: int) -> None:
+    T = "translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')"
     load_more_xpaths = [
-        "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'carica')]",
-        "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'load more')]",
-        "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'mostra')]",
-        "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'vedi altri')]",
+        # Bottoni generici
+        f"//button[contains({T}, 'carica')]",
+        f"//button[contains({T}, 'load more')]",
+        f"//button[contains({T}, 'mostra')]",
+        f"//button[contains({T}, 'vedi altri')]",
+        f"//button[contains({T}, 'visualizza tutti')]",
+        f"//button[contains({T}, 'vedi tutti')]",
+        # Link <a> — Deliveroo usa spesso <a> invece di <button>
+        f"//a[contains({T}, 'visualizza tutti')]",
+        f"//a[contains({T}, 'vedi tutti')]",
+        f"//a[contains({T}, 'ristoranti disponibili')]",
+        f"//a[contains({T}, 'mostra tutti')]",
     ]
     no_change_streak = 0
     for _ in range(max(max_clicks, 8)):  # max 8 scroll per geohash
