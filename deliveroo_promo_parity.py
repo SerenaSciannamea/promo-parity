@@ -455,6 +455,26 @@ def should_collect_menu_products(promotion_type: str) -> bool:
     return bool(pt) and not is_excluded_promo(pt)
 
 
+def scroll_menu_to_load_all(driver: webdriver.Chrome) -> None:
+    """Scrolla il menu del ristorante fino in fondo per caricare tutti i prodotti."""
+    last_height = driver.execute_script("return document.body.scrollHeight")
+    no_change_streak = 0
+    for _ in range(20):  # max 20 scroll sul menu
+        driver.execute_script("window.scrollBy(0, 600);")
+        time.sleep(0.3)
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            no_change_streak += 1
+            if no_change_streak >= 3:
+                break
+        else:
+            no_change_streak = 0
+            last_height = new_height
+    # Torna in cima per permettere l'estrazione dall'intero DOM
+    driver.execute_script("window.scrollTo(0, 0);")
+    time.sleep(0.2)
+
+
 def extract_promoted_products_from_menu(driver: webdriver.Chrome, promotion_type: str) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -999,6 +1019,9 @@ def collect_promo_products_for_rows(
         if page_is_blocked(driver):
             print(f"    -> menu blocked for {row.get('restaurant_name', '')}", flush=True)
             continue
+
+        # Scrolla tutto il menu per caricare i prodotti lazy-load
+        scroll_menu_to_load_all(driver)
 
         product_rows = []
         scraped_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
