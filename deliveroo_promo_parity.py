@@ -54,10 +54,13 @@ PROMO_PATTERNS = [
     r"%",
     r"prodotti\s+selezionati",
     r"men[uù]\s+in\s+offerta",
-    r"consegna\s+gratis",
+    r"consegna\s+grat(is|uita)",
     r"spese\s+di\s+consegna\s+a\s+0",
     r"consegna\s+a\s+0",
     r"offerta",
+    r"omaggio",           # "prodotto omaggio", "aggiungi un prodotto omaggio"
+    r"aggiungi\s+un",     # "aggiungi un prodotto omaggio"
+    r"2x1|due\s+x\s+uno",
 ]
 PROMO_REGEX = re.compile("|".join(PROMO_PATTERNS), re.IGNORECASE)
 METRIC_REGEX = re.compile(
@@ -69,7 +72,9 @@ METRIC_REGEX = re.compile(
 )
 EDITORIAL_REGEX = re.compile(
     r"(sapori\s+decisi|nuovo|novit[aà]|sponsorizzato|sponsored|scelto\s+per\s+te"
-    r"|solo\s+su\s+deliveroo|esclusiv[oa]\s+deliveroo|solo\s+deliveroo)",
+    r"|solo\s+su\s+deliveroo|esclusiv[oa]\s+deliveroo|solo\s+deliveroo"
+    r"|porzioni\s+generose|spese\s+di\s+consegna\s+bass[e]?"
+    r"|consegna\s+rapida|in\s+primo\s+piano)",
     re.IGNORECASE,
 )
 PREORDER_REGEX = re.compile(
