@@ -526,12 +526,39 @@ def extract_promoted_products_from_menu(driver: webdriver.Chrome, promotion_type
     return items
 
 
+def get_card_text(driver: webdriver.Chrome, anchor) -> str:
+    """
+    Risale al contenitore della card per ottenere il testo completo inclusi i badge
+    promo (overlay sull'immagine) che sono sibling dell'anchor, non figli.
+    """
+    try:
+        card_text = driver.execute_script(
+            """
+            const a = arguments[0];
+            // Risali finché il contenitore ha esattamente 1 anchor /menu/
+            let node = a.parentElement;
+            for (let i = 0; i < 8; i++) {
+                if (!node || !node.parentElement) break;
+                const links = node.querySelectorAll("a[href*='/menu/']");
+                if (links.length === 1) return node.innerText;
+                node = node.parentElement;
+            }
+            return a.innerText;
+            """,
+            anchor,
+        )
+        return card_text or ""
+    except Exception:
+        return anchor.text or ""
+
+
 def extract_cards(driver: webdriver.Chrome) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for anchor in driver.find_elements(By.CSS_SELECTOR, "a[href*='/menu/']"):
         href = clean_text(anchor.get_attribute("href") or "")
-        text = anchor.text or ""
+        # Usa il testo dell'intera card (include badge promo sibling all'anchor)
+        text = get_card_text(driver, anchor)
         lines = [clean_text(line) for line in text.splitlines() if clean_text(line)]
         restaurant_name = infer_restaurant_name(lines, href)
         if not restaurant_name:
