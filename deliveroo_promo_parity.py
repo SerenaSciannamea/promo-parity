@@ -68,7 +68,8 @@ METRIC_REGEX = re.compile(
     re.IGNORECASE,
 )
 EDITORIAL_REGEX = re.compile(
-    r"(sapori\s+decisi|nuovo|sponsorizzato|sponsored|scelto\s+per\s+te)",
+    r"(sapori\s+decisi|nuovo|novit[aà]|sponsorizzato|sponsored|scelto\s+per\s+te"
+    r"|solo\s+su\s+deliveroo|esclusiv[oa]\s+deliveroo|solo\s+deliveroo)",
     re.IGNORECASE,
 )
 PREORDER_REGEX = re.compile(
