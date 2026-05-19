@@ -100,7 +100,7 @@ $null = $paramList.Add($script)
 $null = $paramList.Add("--polygons")
 $null = $paramList.Add($polygons)
 $null = $paramList.Add("--sample-step-km")
-$null = $paramList.Add("3.0")
+$null = $paramList.Add("4.5")
 $null = $paramList.Add("--max-points-per-city")
 $null = $paramList.Add("$MaxPointsPerCity")
 $null = $paramList.Add("--skip-city-after-same-results")
@@ -164,10 +164,31 @@ while ($scrapeExit -ne 0 -and $scrapeExit -ne 2 -and $attempt -lt $maxRetries) {
 if ($scrapeExit -eq 0) {
     Write-Log "Scraper completato con successo (tentativi: $attempt)."
     Send-Notify -Subject "Scraper Deliveroo completato $currentWeek" -Body "Lo scraper Deliveroo ha terminato con successo dopo $attempt tentativo/i. I dati sono pronti per la pipeline."
+
+    # ---------------------------------------------------------------------------
+    # Avvia automaticamente la pipeline parity al termine dello scraper
+    # ---------------------------------------------------------------------------
+    $fridayScript = Join-Path $PSScriptRoot "run_friday.ps1"
+    if (Test-Path $fridayScript) {
+        Write-Log "Avvio automatico pipeline parity..."
+        Push-Location $PSScriptRoot
+        & powershell.exe -NonInteractive -ExecutionPolicy Bypass -File $fridayScript
+        $pipelineExit = $LASTEXITCODE
+        Pop-Location
+        if ($pipelineExit -eq 0) {
+            Write-Log "Pipeline parity completata con successo."
+        } else {
+            Write-Log "ERRORE: Pipeline parity terminata con exit code $pipelineExit."
+        }
+    } else {
+        Write-Log "ATTENZIONE: run_friday.ps1 non trovato, pipeline non avviata."
+    }
+
 } elseif ($scrapeExit -eq 2) {
-    Write-Log "Scraper interrotto manualmente (exit 2)."
+    Write-Log "Scraper interrotto manualmente (exit 2). Pipeline non avviata."
 } else {
     $errMsg = "Lo scraper Deliveroo ha terminato con errore dopo $maxRetries tentativi (exit code $scrapeExit)."
     Write-Log "ERRORE: $errMsg"
     Send-Notify -Subject "ERRORE scraper Deliveroo $currentWeek" -Body $errMsg -IsError
+    Write-Log "Pipeline non avviata a causa dell'errore dello scraper."
 }
