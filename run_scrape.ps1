@@ -6,7 +6,8 @@ param(
     [string]$GoogleSheet = "",
     [int]$GoogleWorksheetGid = 0,
     [string]$GoogleServiceAccountJson = "",
-    [int]$SkipCityAfterSameResults = 4
+    [int]$SkipCityAfterSameResults = 4,
+    [switch]$Fresh          # Cancella tutti i file di output e riparte da zero
 )
 
 $python    = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
@@ -16,6 +17,27 @@ $outputDir = Join-Path $PSScriptRoot "output"
 $scrapeLog = Join-Path $PSScriptRoot "data\scraper_log.txt"
 
 New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot "data") | Out-Null
+
+# ---------------------------------------------------------------------------
+# -Fresh: cancella tutti i file di output e riparte da zero
+# ---------------------------------------------------------------------------
+if ($Fresh) {
+    $filesToClean = @(
+        "deliveroo_promo_raw.csv",
+        "deliveroo_promo_deduped.csv",
+        "deliveroo_sample_status.csv",
+        "deliveroo_promo_products.csv",
+        "stores_with_deliveroo_names.csv"
+    )
+    foreach ($fname in $filesToClean) {
+        $fpath = Join-Path $outputDir $fname
+        if (Test-Path $fpath) {
+            Remove-Item -Path $fpath -Force
+            Write-Host "[Fresh] Rimosso: $fname"
+        }
+    }
+    Write-Host "[Fresh] Partenza da zero per la settimana corrente."
+}
 
 # App Password Gmail - letta da secrets.ps1 (mai committato su GitHub)
 $emailAppPassword = ""
