@@ -17,7 +17,7 @@ $scrapeLog = Join-Path $PSScriptRoot "data\scraper_log.txt"
 
 New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot "data") | Out-Null
 
-# App Password Gmail — letta da secrets.ps1 (mai committato su GitHub)
+# App Password Gmail - letta da secrets.ps1 (mai committato su GitHub)
 $emailAppPassword = ""
 $secretsFile = Join-Path $PSScriptRoot "secrets.ps1"
 if (Test-Path $secretsFile) { . $secretsFile }
@@ -51,19 +51,13 @@ function Send-Notify {
 
 # ---------------------------------------------------------------------------
 # Archivia automaticamente l'output della settimana precedente
-#
-# Logica: se il file deliveroo_promo_raw.csv esiste ed e' stato scritto
-# in una settimana ISO diversa da quella corrente, spostiamo tutti i file
-# di output in output/archive/YYYY-Www/ e ripartiamo da zero.
 # ---------------------------------------------------------------------------
 $rawCsv = Join-Path $outputDir "deliveroo_promo_raw.csv"
 
 if (Test-Path $rawCsv) {
-    # Settimana corrente in formato ISO (es. "2026-W20")
     $now         = Get-Date
     $currentWeek = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
 
-    # Settimana in cui e' stato scritto il file
     $fileDate = (Get-Item $rawCsv).LastWriteTime
     $fileWeek = "{0}-W{1:D2}" -f ($fileDate.ToString("yyyy")), [int]($fileDate | Get-Date -UFormat "%V")
 
@@ -106,7 +100,7 @@ $null = $paramList.Add($script)
 $null = $paramList.Add("--polygons")
 $null = $paramList.Add($polygons)
 $null = $paramList.Add("--sample-step-km")
-$null = $paramList.Add("2.5")
+$null = $paramList.Add("3.0")
 $null = $paramList.Add("--max-points-per-city")
 $null = $paramList.Add("$MaxPointsPerCity")
 $null = $paramList.Add("--skip-city-after-same-results")
@@ -144,24 +138,36 @@ if ($GoogleServiceAccountJson -ne "") {
 }
 
 # ---------------------------------------------------------------------------
-# Avvia lo scraper
+# Avvia lo scraper con auto-restart in caso di crash
 # ---------------------------------------------------------------------------
 $currentWeek = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
 Write-Log "Avvio scraper Deliveroo per settimana $currentWeek..."
 
-Push-Location $PSScriptRoot
-& $python $paramList.ToArray()
-$scrapeExit = $LASTEXITCODE
-Pop-Location
+$maxRetries = 20
+$attempt    = 0
+$scrapeExit = 1
+
+while ($scrapeExit -ne 0 -and $scrapeExit -ne 2 -and $attempt -lt $maxRetries) {
+    if ($attempt -gt 0) {
+        Write-Log "Auto-restart #$attempt - attendo 5 secondi e riprendo dal punto di interruzione..."
+        Start-Sleep -Seconds 5
+        Get-Process chrome, chromedriver -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Seconds 2
+    }
+    $attempt++
+    Push-Location $PSScriptRoot
+    & $python $paramList.ToArray()
+    $scrapeExit = $LASTEXITCODE
+    Pop-Location
+}
 
 if ($scrapeExit -eq 0) {
-    Write-Log "Scraper completato con successo."
-    Send-Notify -Subject "Scraper Deliveroo completato $currentWeek" -Body "Lo scraper Deliveroo ha terminato con successo. I dati sono pronti per la pipeline delle 20:00."
+    Write-Log "Scraper completato con successo (tentativi: $attempt)."
+    Send-Notify -Subject "Scraper Deliveroo completato $currentWeek" -Body "Lo scraper Deliveroo ha terminato con successo dopo $attempt tentativo/i. I dati sono pronti per la pipeline."
 } elseif ($scrapeExit -eq 2) {
-    Write-Log "Scraper interrotto (resume attivo per la prossima esecuzione)."
-    # Uscita con codice 2 = interruzione manuale o blocco, non un errore vero
+    Write-Log "Scraper interrotto manualmente (exit 2)."
 } else {
-    $errMsg = "Lo scraper Deliveroo ha terminato con errore (exit code $scrapeExit). Controlla il log."
+    $errMsg = "Lo scraper Deliveroo ha terminato con errore dopo $maxRetries tentativi (exit code $scrapeExit)."
     Write-Log "ERRORE: $errMsg"
     Send-Notify -Subject "ERRORE scraper Deliveroo $currentWeek" -Body $errMsg -IsError
 }
