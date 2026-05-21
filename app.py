@@ -243,13 +243,21 @@ def _local_glovo_products_prime(city_code: str, store_name: str, week_num: str) 
         return pd.DataFrame()
 
 
-def _local_deliveroo_products(city_code: str, restaurant_name: str) -> pd.DataFrame:
+def _local_deliveroo_products_raw(city_code: str) -> pd.DataFrame:
+    """Carica tutto il CSV prodotti Deliveroo per una città (filtraggio delegato a load_deliveroo_products)."""
     p = ROOT / "output" / "deliveroo_promo_products.csv"
     if not p.exists():
         return pd.DataFrame()
     df = pd.read_csv(p, dtype=str).fillna("")
     df.columns = [c.strip().lower() for c in df.columns]
-    mask = (df["city_code"] == city_code) & (df["restaurant_name"] == restaurant_name)
+    return df[df["city_code"] == city_code] if "city_code" in df.columns else df
+
+
+def _local_deliveroo_products(city_code: str, restaurant_name: str) -> pd.DataFrame:
+    df = _local_deliveroo_products_raw(city_code)
+    if df.empty:
+        return pd.DataFrame()
+    mask = df["restaurant_name"] == restaurant_name
     cols = ["product_name", "product_description", "product_price", "promotion_type"]
     cols_present = [c for c in cols if c in df.columns]
     return df[mask][cols_present].drop_duplicates("product_name")
@@ -514,18 +522,17 @@ def load_deliveroo_promo_counts() -> pd.DataFrame:
 
 
 def load_glovo_products(city_code: str, store_name: str, week_num: str) -> pd.DataFrame:
-    """Prodotti Glovo per uno store specifico. Non cachato (filtra live)."""
+    """Prodotti Glovo per uno store specifico. Non cachato (filtra live).
+    Se week_num è stringa vuota, restituisce tutti i prodotti disponibili per lo store."""
     if _is_cloud_mode():
         df = _cloud_glovo_products()
         if df.empty:
             return pd.DataFrame()
-        mask = (
-            (df["city_code"] == city_code)
-            & (df["store_name"] == store_name)
-            & (df["week_num"] == week_num)
-        )
+        mask = (df["city_code"] == city_code) & (df["store_name"] == store_name)
+        if week_num:
+            mask = mask & (df["week_num"] == week_num)
         cols = ["product_name", "type_of_promo", "has_active_promo",
-                "avg_percentage_off", "avg_unit_price", "total_product_sold"]
+                "avg_percentage_off", "avg_unit_price", "total_product_sold", "week_num"]
         cols_present = [c for c in cols if c in df.columns]
         return df[mask][cols_present].sort_values(
             ["has_active_promo", "avg_unit_price"],
@@ -534,19 +541,35 @@ def load_glovo_products(city_code: str, store_name: str, week_num: str) -> pd.Da
     return _local_glovo_products(city_code, store_name, week_num)
 
 
-def load_deliveroo_products(city_code: str, restaurant_name: str) -> pd.DataFrame:
+def load_deliveroo_products(city_code: str, restaurant_name: str, week_num: str = "") -> pd.DataFrame:
     """Prodotti Deliveroo per uno store specifico. Non cachato (filtra live)."""
     if not restaurant_name:
         return pd.DataFrame()
-    if _is_cloud_mode():
-        df = _cloud_deliveroo_products()
+
+    def _filter_and_return(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame()
         mask = (df["city_code"] == city_code) & (df["restaurant_name"] == restaurant_name)
+        # Filtra per settimana derivata da scraped_at_utc se disponibile
+        if week_num and "scraped_at_utc" in df.columns:
+            def _ts_to_week(ts):
+                try:
+                    dt = pd.to_datetime(ts, utc=True)
+                    iso = dt.isocalendar()
+                    return f"{iso[0]}-W{iso[1]:02d}"
+                except Exception:
+                    return ""
+            week_mask = df["scraped_at_utc"].apply(_ts_to_week) == week_num
+            if week_mask.any():
+                mask = mask & week_mask
         cols = ["product_name", "product_description", "product_price", "promotion_type"]
         cols_present = [c for c in cols if c in df.columns]
-        return df[mask][cols_present].drop_duplicates("product_name") if "product_name" in df.columns else df[mask][cols_present]
-    return _local_deliveroo_products(city_code, restaurant_name)
+        result = df[mask][cols_present]
+        return result.drop_duplicates("product_name") if "product_name" in result.columns else result
+
+    if _is_cloud_mode():
+        return _filter_and_return(_cloud_deliveroo_products())
+    return _filter_and_return(_local_deliveroo_products_raw(city_code))
 
 
 # ---------------------------------------------------------------------------
@@ -1157,16 +1180,22 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
     })
 
     def color_parity(val):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return ""
         colors = {
             "SUPERIORITY": "background-color: #d0f0ea; color: #00614e",
             "PARITY":      "background-color: #FFF8D0; color: #7a6300",
             "INFERIORITY": "background-color: #fee2e2; color: #991b1b",
             "UNMATCHED":   "background-color: #f1f5f9; color: #475569",
         }
-        return colors.get(val, "")
+        return colors.get(str(val).strip(), "")
 
+    try:
+        styled = disp.style.map(color_parity, subset=["Comparison"])
+    except Exception:
+        styled = disp.style
     st.dataframe(
-        disp.style.map(color_parity, subset=["Comparison"]),
+        styled,
         column_config=_col_config_from_data(disp),
         use_container_width=True,
         hide_index=True,
@@ -1307,7 +1336,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
         week_nm        = str(latest.get("week_num", ""))
 
         gp = load_glovo_products(city_code, sel_store, week_nm)
-        dp = load_deliveroo_products(city_code, deliveroo_nm)
+        dp = load_deliveroo_products(city_code, deliveroo_nm, week_nm)
 
         # [E] Vista Prime: carica anche i dati prime per colonna aggiuntiva
         if prime:
@@ -1340,7 +1369,12 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                 st.markdown("<span style='background:#F2CC38;color:#161717;padding:4px 12px;border-radius:6px;font-weight:700'>🛵 Glovo</span>", unsafe_allow_html=True)
             st.write("")
             if gp.empty:
-                st.info("Dati prodotti Glovo non ancora disponibili.\nVerranno caricati al prossimo run della pipeline.")
+                # Controlla se esistono prodotti per settimane diverse (dati storici non disponibili)
+                _gp_any = load_glovo_products(city_code, sel_store, "")
+                if not _gp_any.empty and _is_cloud_mode():
+                    st.info(f"I prodotti Glovo sono disponibili solo per la settimana corrente ({_gp_any['week_num'].max() if 'week_num' in _gp_any.columns else '—'}). Seleziona la settimana più recente per vederli.")
+                else:
+                    st.info("Dati prodotti Glovo non ancora disponibili. Verranno caricati al prossimo run della pipeline.")
             else:
                 def _glovo_promo_badge(row):
                     if row.get("has_active_promo", "N") == "Y":
