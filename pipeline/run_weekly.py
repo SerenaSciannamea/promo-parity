@@ -446,9 +446,22 @@ def run_pipeline(
             review_df  = load_review_queue()
             # Carica prodotti Deliveroo dal file raw (product-level, non deduped)
             if DELIVEROO_PRODUCTS.exists():
-                dp_cols = ["city_code", "restaurant_name", "product_name",
-                           "product_description", "product_price", "promotion_type"]
                 deliveroo_products_raw = pd.read_csv(DELIVEROO_PRODUCTS, dtype=str).fillna("")
+                # Deriva week_num da scraped_at_utc se non presente
+                if "week_num" not in deliveroo_products_raw.columns:
+                    if "scraped_at_utc" in deliveroo_products_raw.columns:
+                        def _ts_to_week(ts):
+                            try:
+                                dt = pd.to_datetime(ts, utc=True)
+                                iso = dt.isocalendar()
+                                return f"{iso[0]}-W{int(iso[1]):02d}"
+                            except Exception:
+                                return week
+                        deliveroo_products_raw["week_num"] = deliveroo_products_raw["scraped_at_utc"].apply(_ts_to_week)
+                    else:
+                        deliveroo_products_raw["week_num"] = week
+                dp_cols = ["city_code", "restaurant_name", "week_num", "product_name",
+                           "product_description", "product_price", "promotion_type"]
                 dp_cols_present = [c for c in dp_cols if c in deliveroo_products_raw.columns]
                 deliveroo_products = deliveroo_products_raw[dp_cols_present] if dp_cols_present else None
             else:

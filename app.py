@@ -550,18 +550,23 @@ def load_deliveroo_products(city_code: str, restaurant_name: str, week_num: str 
         if df.empty:
             return pd.DataFrame()
         mask = (df["city_code"] == city_code) & (df["restaurant_name"] == restaurant_name)
-        # Filtra per settimana derivata da scraped_at_utc se disponibile
-        if week_num and "scraped_at_utc" in df.columns:
-            def _ts_to_week(ts):
-                try:
-                    dt = pd.to_datetime(ts, utc=True)
-                    iso = dt.isocalendar()
-                    return f"{iso[0]}-W{iso[1]:02d}"
-                except Exception:
-                    return ""
-            week_mask = df["scraped_at_utc"].apply(_ts_to_week) == week_num
-            if week_mask.any():
-                mask = mask & week_mask
+        # Filtra per settimana: prima prova week_num diretto, poi scraped_at_utc
+        if week_num:
+            if "week_num" in df.columns:
+                week_mask = df["week_num"] == week_num
+                if week_mask.any():
+                    mask = mask & week_mask
+            elif "scraped_at_utc" in df.columns:
+                def _ts_to_week(ts):
+                    try:
+                        dt = pd.to_datetime(ts, utc=True)
+                        iso = dt.isocalendar()
+                        return f"{iso[0]}-W{int(iso[1]):02d}"
+                    except Exception:
+                        return ""
+                week_mask = df["scraped_at_utc"].apply(_ts_to_week) == week_num
+                if week_mask.any():
+                    mask = mask & week_mask
         cols = ["product_name", "product_description", "product_price", "promotion_type"]
         cols_present = [c for c in cols if c in df.columns]
         result = df[mask][cols_present]

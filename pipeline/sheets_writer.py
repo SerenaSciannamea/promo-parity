@@ -207,8 +207,8 @@ def export_to_sheets(
         print(f"[sheets_writer] glovo_products: {n} righe scritte")
 
     if deliveroo_products is not None and len(deliveroo_products) > 0:
-        # Filtra colonne utili
-        dp_cols = ["city_code", "restaurant_name", "product_name",
+        # Filtra colonne utili — week_num incluso per filtro settimana nella dashboard
+        dp_cols = ["city_code", "restaurant_name", "week_num", "product_name",
                    "product_description", "product_price", "promotion_type"]
         dp_cols_present = [c for c in dp_cols if c in deliveroo_products.columns]
         n = _replace_sheet(sheet, TAB_DELIVEROO_PRODUCTS, deliveroo_products[dp_cols_present])
