@@ -550,12 +550,10 @@ def load_deliveroo_products(city_code: str, restaurant_name: str, week_num: str 
         if df.empty:
             return pd.DataFrame()
         mask = (df["city_code"] == city_code) & (df["restaurant_name"] == restaurant_name)
-        # Filtra per settimana: prima prova week_num diretto, poi scraped_at_utc
+        # Filtra per settimana — sempre applicato se week_num fornito
         if week_num:
             if "week_num" in df.columns:
-                week_mask = df["week_num"] == week_num
-                if week_mask.any():
-                    mask = mask & week_mask
+                mask = mask & (df["week_num"] == week_num)
             elif "scraped_at_utc" in df.columns:
                 def _ts_to_week(ts):
                     try:
@@ -564,9 +562,7 @@ def load_deliveroo_products(city_code: str, restaurant_name: str, week_num: str 
                         return f"{iso[0]}-W{int(iso[1]):02d}"
                     except Exception:
                         return ""
-                week_mask = df["scraped_at_utc"].apply(_ts_to_week) == week_num
-                if week_mask.any():
-                    mask = mask & week_mask
+                mask = mask & (df["scraped_at_utc"].apply(_ts_to_week) == week_num)
         cols = ["product_name", "product_description", "product_price", "promotion_type"]
         cols_present = [c for c in cols if c in df.columns]
         result = df[mask][cols_present]
