@@ -200,9 +200,10 @@ def export_to_sheets(
         result[TAB_NEEDS_REVIEW] = n
         print(f"[sheets_writer] needs_review: {n} righe scritte")
 
-    # Tab prodotti: sostituiti completamente (solo ultima settimana)
+    # Tab prodotti: upsert per settimana (mantiene storico settimane precedenti)
     if glovo_products is not None and len(glovo_products) > 0:
-        n = _replace_sheet(sheet, TAB_GLOVO_PRODUCTS, glovo_products)
+        ws = _get_or_create_worksheet(sheet, TAB_GLOVO_PRODUCTS, glovo_products.columns.tolist())
+        n  = _upsert_sheet(ws, glovo_products, key_cols=["city_code", "store_name", "week_num", "product_name"])
         result[TAB_GLOVO_PRODUCTS] = n
         print(f"[sheets_writer] glovo_products: {n} righe scritte")
 
@@ -211,7 +212,9 @@ def export_to_sheets(
         dp_cols = ["city_code", "restaurant_name", "week_num", "product_name",
                    "product_description", "product_price", "promotion_type"]
         dp_cols_present = [c for c in dp_cols if c in deliveroo_products.columns]
-        n = _replace_sheet(sheet, TAB_DELIVEROO_PRODUCTS, deliveroo_products[dp_cols_present])
+        dp_df = deliveroo_products[dp_cols_present]
+        ws = _get_or_create_worksheet(sheet, TAB_DELIVEROO_PRODUCTS, dp_df.columns.tolist())
+        n  = _upsert_sheet(ws, dp_df, key_cols=["city_code", "restaurant_name", "week_num", "product_name"])
         result[TAB_DELIVEROO_PRODUCTS] = n
         print(f"[sheets_writer] deliveroo_products: {n} righe scritte")
 
