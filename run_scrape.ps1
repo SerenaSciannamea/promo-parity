@@ -83,7 +83,11 @@ if (Test-Path $rawCsv) {
     $fileDate = (Get-Item $rawCsv).LastWriteTime
     $fileWeek = "{0}-W{1:D2}" -f ($fileDate.ToString("yyyy")), [int]($fileDate | Get-Date -UFormat "%V")
 
+    $today    = (Get-Date).ToString("yyyy-MM-dd")
+    $fileDay  = $fileDate.ToString("yyyy-MM-dd")
+
     if ($fileWeek -ne $currentWeek) {
+        # Settimana diversa: archivia e riparte da zero
         Write-Log "Trovati file della settimana $fileWeek (settimana corrente: $currentWeek)."
         Write-Log "Archivio i file vecchi e riparto da zero per la nuova settimana..."
 
@@ -107,8 +111,31 @@ if (Test-Path $rawCsv) {
         }
 
         Write-Log "Archiviazione completata. Lo scraper parte da zero per $currentWeek."
+
+    } elseif ($fileDay -ne $today) {
+        # Stessa settimana ma giorno diverso: riparte da zero (no resume)
+        Write-Log "File della settimana corrente ma di un giorno precedente ($fileDay vs oggi $today)."
+        Write-Log "Riparto da zero per oggi — cancello sample_status e output parziali..."
+
+        $filesToClean = @(
+            "deliveroo_promo_raw.csv",
+            "deliveroo_promo_deduped.csv",
+            "deliveroo_sample_status.csv",
+            "deliveroo_promo_products.csv",
+            "stores_with_deliveroo_names.csv"
+        )
+        foreach ($fname in $filesToClean) {
+            $fpath = Join-Path $outputDir $fname
+            if (Test-Path $fpath) {
+                Remove-Item -Path $fpath -Force
+                Write-Log "  Rimosso: $fname"
+            }
+        }
+        Write-Log "Pulizia completata. Partenza da zero per oggi."
+
     } else {
-        Write-Log "File output gia' della settimana corrente ($currentWeek): riprendo da dove mi ero fermato."
+        # Stesso giorno: riprende dal punto di interruzione
+        Write-Log "File output di oggi ($today): riprendo dal punto di interruzione."
     }
 } else {
     Write-Log "Nessun file output precedente trovato. Partenza da zero."
