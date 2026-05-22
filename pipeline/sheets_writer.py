@@ -86,10 +86,17 @@ def _upsert_sheet(
     ws: "gspread.Worksheet",
     df: pd.DataFrame,
     key_cols: list[str],
+    partition_cols: list[str] | None = None,
 ) -> int:
     """
     Legge le righe esistenti nel worksheet, fa upsert su key_cols,
     e riscrive il foglio con i dati aggiornati.
+
+    partition_cols: se specificato, tutte le righe esistenti che appartengono
+    alle stesse partizioni dei nuovi dati vengono cancellate prima dell'inserimento.
+    Esempio: partition_cols=["week_num"] garantisce che i dati della stessa
+    settimana vengano sempre sovrascritti completamente (run multipli nella
+    stessa settimana non si accumulano).
 
     Restituisce il numero di righe scritte.
     """
@@ -104,15 +111,21 @@ def _upsert_sheet(
         if col not in existing_df.columns:
             existing_df[col] = ""
 
-    # Upsert: rimuovi righe esistenti con stessa chiave, aggiungi nuove
-    if key_cols and all(k in existing_df.columns for k in key_cols):
-        df_str = df.copy().astype(str)
+    df_str = df.copy().astype(str)
+
+    if partition_cols and all(p in existing_df.columns for p in partition_cols):
+        # Rimuovi tutte le righe esistenti delle stesse partizioni dei nuovi dati
+        new_partitions = set(df_str[partition_cols].apply(tuple, axis=1))
+        existing_df = existing_df[
+            ~existing_df[partition_cols].apply(tuple, axis=1).isin(new_partitions)
+        ]
+    elif key_cols and all(k in existing_df.columns for k in key_cols):
+        # Fallback: upsert standard per chiave
         key_existing = existing_df[key_cols].apply(tuple, axis=1)
         key_new      = df_str[key_cols].apply(tuple, axis=1)
         existing_df  = existing_df[~key_existing.isin(key_new.values)]
-        combined     = pd.concat([existing_df, df_str], ignore_index=True)
-    else:
-        combined = df.astype(str)
+
+    combined = pd.concat([existing_df, df_str], ignore_index=True)
 
     # Riscrivi il foglio
     ws.clear()
@@ -203,7 +216,9 @@ def export_to_sheets(
     # Tab prodotti: upsert per settimana (mantiene storico settimane precedenti)
     if glovo_products is not None and len(glovo_products) > 0:
         ws = _get_or_create_worksheet(sheet, TAB_GLOVO_PRODUCTS, glovo_products.columns.tolist())
-        n  = _upsert_sheet(ws, glovo_products, key_cols=["city_code", "store_name", "week_num", "product_name"])
+        n  = _upsert_sheet(ws, glovo_products,
+                           key_cols=["city_code", "store_name", "week_num", "product_name"],
+                           partition_cols=["week_num"])
         result[TAB_GLOVO_PRODUCTS] = n
         print(f"[sheets_writer] glovo_products: {n} righe scritte")
 
@@ -214,7 +229,9 @@ def export_to_sheets(
         dp_cols_present = [c for c in dp_cols if c in deliveroo_products.columns]
         dp_df = deliveroo_products[dp_cols_present]
         ws = _get_or_create_worksheet(sheet, TAB_DELIVEROO_PRODUCTS, dp_df.columns.tolist())
-        n  = _upsert_sheet(ws, dp_df, key_cols=["city_code", "restaurant_name", "week_num", "product_name"])
+        n  = _upsert_sheet(ws, dp_df,
+                           key_cols=["city_code", "restaurant_name", "week_num", "product_name"],
+                           partition_cols=["week_num"])
         result[TAB_DELIVEROO_PRODUCTS] = n
         print(f"[sheets_writer] deliveroo_products: {n} righe scritte")
 
