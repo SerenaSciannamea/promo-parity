@@ -44,7 +44,9 @@ function Send-Notify {
     Pop-Location
 }
 
+$currentWeek = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
 Write-Log "===== Avvio pipeline Promo Parity ====="
+Send-Notify -Subject "Pipeline Promo Parity avviata $currentWeek" -Body "La pipeline settimanale e' partita per la settimana $currentWeek. Riceverai una mail al completamento con il link alla dashboard."
 
 # ===========================================================================
 # CHECK — Già girata oggi? (evita doppi run schedulati)
@@ -80,7 +82,6 @@ if (Test-Path $secretsFile) { . $secretsFile }
 # ===========================================================================
 
 $deliverooCsv    = "$proj\output\deliveroo_promo_deduped.csv"
-$currentWeek     = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
 
 # Calcola il lunedì della settimana corrente (inizio settimana ISO)
 $today           = Get-Date

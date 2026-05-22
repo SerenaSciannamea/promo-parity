@@ -191,6 +191,7 @@ if ($GoogleServiceAccountJson -ne "") {
 # ---------------------------------------------------------------------------
 $currentWeek = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
 Write-Log "Avvio scraper Deliveroo per settimana $currentWeek..."
+Send-Notify -Subject "Scraper Deliveroo avviato $currentWeek" -Body "Lo scraper Deliveroo e' partito per la settimana $currentWeek. Potrai seguire l'avanzamento nella finestra PowerShell aperta sul PC."
 
 $maxRetries = 20
 $attempt    = 0
