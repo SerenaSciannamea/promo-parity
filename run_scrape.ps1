@@ -45,6 +45,21 @@ $secretsFile = Join-Path $PSScriptRoot "secrets.ps1"
 if (Test-Path $secretsFile) { . $secretsFile }
 
 # ---------------------------------------------------------------------------
+# Helper: numero settimana ISO 8601 corretto (Get-Date %V su Windows e' off-by-one)
+# ---------------------------------------------------------------------------
+function Get-ISOWeek {
+    param([datetime]$Date = (Get-Date))
+    $isoDOW   = ([int]$Date.DayOfWeek + 6) % 7   # 0=Lun ... 6=Dom
+    $thursday = $Date.AddDays(3 - $isoDOW)        # giovedi' della stessa settimana ISO
+    $isoYear  = $thursday.Year
+    $jan4     = [datetime]::new($isoYear, 1, 4)   # 4 gen e' sempre in W1
+    $jan4ISO  = ([int]$jan4.DayOfWeek + 6) % 7
+    $w1Monday = $jan4.AddDays(-$jan4ISO)
+    $weekNum  = [int][Math]::Floor(($thursday.Date - $w1Monday.Date).TotalDays / 7) + 1
+    return "{0}-W{1:D2}" -f $isoYear, $weekNum
+}
+
+# ---------------------------------------------------------------------------
 # Funzione di log con timestamp
 # ---------------------------------------------------------------------------
 function Write-Log {
@@ -78,16 +93,20 @@ $rawCsv = Join-Path $outputDir "deliveroo_promo_raw.csv"
 
 if (Test-Path $rawCsv) {
     $now         = Get-Date
-    $currentWeek = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
+    $currentWeek = Get-ISOWeek
 
     $fileDate = (Get-Item $rawCsv).LastWriteTime
-    $fileWeek = "{0}-W{1:D2}" -f ($fileDate.ToString("yyyy")), [int]($fileDate | Get-Date -UFormat "%V")
+    $fileWeek = Get-ISOWeek $fileDate
 
     $today    = (Get-Date).ToString("yyyy-MM-dd")
     $fileDay  = $fileDate.ToString("yyyy-MM-dd")
 
+    $isFriday = ([int](Get-Date).DayOfWeek -eq 5)   # 5 = Friday
+
     if ($fileWeek -ne $currentWeek) {
-        # Settimana diversa: archivia e riparte da zero
+        # -----------------------------------------------------------------------
+        # Settimana diversa: archivia sempre e riparte da zero
+        # -----------------------------------------------------------------------
         Write-Log "Trovati file della settimana $fileWeek (settimana corrente: $currentWeek)."
         Write-Log "Archivio i file vecchi e riparto da zero per la nuova settimana..."
 
@@ -112,10 +131,13 @@ if (Test-Path $rawCsv) {
 
         Write-Log "Archiviazione completata. Lo scraper parte da zero per $currentWeek."
 
-    } elseif ($fileDay -ne $today) {
-        # Stessa settimana ma giorno diverso: riparte da zero (no resume)
-        Write-Log "File della settimana corrente ma di un giorno precedente ($fileDay vs oggi $today)."
-        Write-Log "Riparto da zero per oggi — cancello sample_status e output parziali..."
+    } elseif ($isFriday -and ($fileDay -ne $today)) {
+        # -----------------------------------------------------------------------
+        # Stessa settimana, e' venerdi', ma i dati non sono di oggi:
+        # il venerdi' si sovrascrive sempre con dati freschi del peak-time
+        # -----------------------------------------------------------------------
+        Write-Log "E' venerdi' e i file esistenti sono del $fileDay (non di oggi $today)."
+        Write-Log "Ripartenza da zero per il venerdi' - cancello output parziali..."
 
         $filesToClean = @(
             "deliveroo_promo_raw.csv",
@@ -131,11 +153,19 @@ if (Test-Path $rawCsv) {
                 Write-Log "  Rimosso: $fname"
             }
         }
-        Write-Log "Pulizia completata. Partenza da zero per oggi."
+        Write-Log "Pulizia completata. Partenza da zero per il venerdi'."
 
     } else {
-        # Stesso giorno: riprende dal punto di interruzione
-        Write-Log "File output di oggi ($today): riprendo dal punto di interruzione."
+        # -----------------------------------------------------------------------
+        # Tutti gli altri casi: riprende dal punto di interruzione
+        #   - Stesso giorno (qualunque giorno della settimana)
+        #   - Infrasettimanale con dati di un giorno diverso (non e' venerdi')
+        # -----------------------------------------------------------------------
+        if ($fileDay -ne $today) {
+            Write-Log "Riprendo dal punto di interruzione (dati del $fileDay, oggi $today, non e' venerdi')."
+        } else {
+            Write-Log "File output di oggi ($today): riprendo dal punto di interruzione."
+        }
     }
 } else {
     Write-Log "Nessun file output precedente trovato. Partenza da zero."
@@ -189,7 +219,7 @@ if ($GoogleServiceAccountJson -ne "") {
 # ---------------------------------------------------------------------------
 # Avvia lo scraper con auto-restart in caso di crash
 # ---------------------------------------------------------------------------
-$currentWeek = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
+$currentWeek = Get-ISOWeek
 Write-Log "Avvio scraper Deliveroo per settimana $currentWeek..."
 Send-Notify -Subject "Scraper Deliveroo avviato $currentWeek" -Body "Lo scraper Deliveroo e' partito per la settimana $currentWeek. Potrai seguire l'avanzamento nella finestra PowerShell aperta sul PC."
 

@@ -354,17 +354,30 @@ def run_pipeline(
 
     # ---- 5. Calcola parity ----
     print(f"\n[5/5] Calcolo parity")
-    store_parity = compute_store_parity(glovo_store, deliveroo_df, match_map)
+
+    # Costruisce il set degli store confermati senza match Deliveroo (Exclusive Glovo)
+    _mapping_df = load_mapping()
+    exclusive_glovo_set: set[tuple[str, str]] = set()
+    if not _mapping_df.empty and "source" in _mapping_df.columns:
+        _excl = _mapping_df[
+            (_mapping_df["source"] == "manual_rejected") &
+            (_mapping_df["deliveroo_name"].fillna("").str.strip() == "")
+        ]
+        exclusive_glovo_set = set(zip(_excl["city_code"].str.strip(), _excl["glovo_name"].str.strip()))
+    print(f"      Exclusive Glovo (manual_rejected): {len(exclusive_glovo_set)} store")
+
+    store_parity = compute_store_parity(glovo_store, deliveroo_df, match_map, exclusive_glovo_set)
     city_parity  = compute_city_parity(store_parity)
 
     sup  = (store_parity["parity"] == "SUPERIORITY").sum()
     par  = (store_parity["parity"] == "PARITY").sum()
     inf  = (store_parity["parity"] == "INFERIORITY").sum()
     unm  = (store_parity["parity"] == "UNMATCHED").sum()
-    print(f"      SUPERIORITY={sup}  PARITY={par}  INFERIORITY={inf}  UNMATCHED={unm}")
+    excl = (store_parity["parity"] == "EXCLUSIVE_GLOVO").sum()
+    print(f"      SUPERIORITY={sup}  PARITY={par}  INFERIORITY={inf}  UNMATCHED={unm}  EXCLUSIVE_GLOVO={excl}")
 
     # ---- 5b. Calcola parity Prime (prime-first) ----
-    store_parity_prime = compute_store_parity(glovo_store_prime, deliveroo_df, match_map)
+    store_parity_prime = compute_store_parity(glovo_store_prime, deliveroo_df, match_map, exclusive_glovo_set)
     city_parity_prime  = compute_city_parity(store_parity_prime)
 
     sup_p = (store_parity_prime["parity"] == "SUPERIORITY").sum()

@@ -28,6 +28,19 @@ function Write-Log {
     Add-Content -Path $log -Value $line -Encoding UTF8
 }
 
+# Helper: numero settimana ISO 8601 corretto (Get-Date %V su Windows e' off-by-one)
+function Get-ISOWeek {
+    param([datetime]$Date = (Get-Date))
+    $isoDOW   = ([int]$Date.DayOfWeek + 6) % 7
+    $thursday = $Date.AddDays(3 - $isoDOW)
+    $isoYear  = $thursday.Year
+    $jan4     = [datetime]::new($isoYear, 1, 4)
+    $jan4ISO  = ([int]$jan4.DayOfWeek + 6) % 7
+    $w1Monday = $jan4.AddDays(-$jan4ISO)
+    $weekNum  = [int][Math]::Floor(($thursday.Date - $w1Monday.Date).TotalDays / 7) + 1
+    return "{0}-W{1:D2}" -f $isoYear, $weekNum
+}
+
 function Send-Notify {
     param([string]$Subject, [string]$Body, [switch]$IsError)
     if (-not $emailAppPassword) { return }
@@ -44,7 +57,7 @@ function Send-Notify {
     Pop-Location
 }
 
-$currentWeek = "{0}-W{1:D2}" -f (Get-Date -UFormat "%G"), [int](Get-Date -UFormat "%V")
+$currentWeek = Get-ISOWeek
 Write-Log "===== Avvio pipeline Promo Parity ====="
 Send-Notify -Subject "Pipeline Promo Parity avviata $currentWeek" -Body "La pipeline settimanale e' partita per la settimana $currentWeek. Riceverai una mail al completamento con il link alla dashboard."
 
@@ -67,7 +80,17 @@ if (Test-Path $log) {
 # ===========================================================================
 
 $outputSheetsId  = "1lAsH0CaoJ3Lfp8uNaJ0-Bu3wTxlO-pn186z_coInnVs"
-$sheetsSa        = "$env:USERPROFILE\Downloads\dogwood-sprite-400413-528afc69c595.json"
+
+# Cerca il Service Account JSON in piu' posizioni comuni
+$saFileName = "dogwood-sprite-400413-528afc69c595.json"
+$saSearchPaths = @(
+    "$env:USERPROFILE\Downloads\$saFileName",
+    "$proj\$saFileName",
+    "$env:USERPROFILE\Documents\$saFileName",
+    "$env:USERPROFILE\Desktop\$saFileName"
+)
+$sheetsSa = $saSearchPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $sheetsSa) { $sheetsSa = "$env:USERPROFILE\Downloads\$saFileName" }  # fallback path
 $glovoSheetId    = "1ah5GsEJaSnv-S8jYytar3Vn9tU8MD8IITfNAWtmtveE"
 $glovoWorksheet  = "Products"
 

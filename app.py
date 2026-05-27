@@ -34,11 +34,12 @@ DB_PATH = ROOT / "data" / "promo_parity.db"
 
 PARITY_COLORS = {
     "SUPERIORITY": "#00A082",   # teal Glovo
-    "PARITY":      "#F2CC38",   # giallo Glovo
-    "INFERIORITY": "#ef4444",   # rosso
-    "UNMATCHED":   "#94a3b8",   # grigio
+    "PARITY":          "#F2CC38",   # giallo Glovo
+    "INFERIORITY":     "#ef4444",   # rosso
+    "UNMATCHED":       "#94a3b8",   # grigio
+    "EXCLUSIVE_GLOVO": "#8b5cf6",   # viola
 }
-PARITY_ORDER = ["SUPERIORITY", "PARITY", "INFERIORITY", "UNMATCHED"]
+PARITY_ORDER = ["SUPERIORITY", "PARITY", "INFERIORITY", "UNMATCHED", "EXCLUSIVE_GLOVO"]
 
 
 def _col_config_from_data(
@@ -534,10 +535,12 @@ def load_glovo_products(city_code: str, store_name: str, week_num: str) -> pd.Da
         cols = ["product_name", "type_of_promo", "has_active_promo",
                 "avg_percentage_off", "avg_unit_price", "total_product_sold", "week_num"]
         cols_present = [c for c in cols if c in df.columns]
-        return df[mask][cols_present].sort_values(
-            ["has_active_promo", "avg_unit_price"],
-            ascending=[True, False],
-        )
+        result = df[mask][cols_present]
+        sort_cols = [c for c in ["has_active_promo", "avg_unit_price"] if c in result.columns]
+        if sort_cols:
+            ascending = [True if c == "has_active_promo" else False for c in sort_cols]
+            result = result.sort_values(sort_cols, ascending=ascending)
+        return result
     return _local_glovo_products(city_code, store_name, week_num)
 
 
@@ -634,11 +637,18 @@ def clear_cache():
 # ---------------------------------------------------------------------------
 
 def parity_badge(label: str) -> str:
-    icons = {"SUPERIORITY": "🟢", "PARITY": "🟡", "INFERIORITY": "🔴", "UNMATCHED": "⚪"}
-    colors = {"SUPERIORITY": "#00A082", "PARITY": "#b8960a", "INFERIORITY": "#ef4444", "UNMATCHED": "#94a3b8"}
+    icons = {"SUPERIORITY": "🟢", "PARITY": "🟡", "INFERIORITY": "🔴", "UNMATCHED": "⚪", "EXCLUSIVE_GLOVO": "🟣"}
+    colors = {"SUPERIORITY": "#00A082", "PARITY": "#b8960a", "INFERIORITY": "#ef4444", "UNMATCHED": "#94a3b8", "EXCLUSIVE_GLOVO": "#7c3aed"}
     c = colors.get(label, "")
     style = f"color:{c};font-weight:600" if c else ""
-    return f"{icons.get(label, '')} {label}"
+    display = {
+        "SUPERIORITY":    "SUPERIORITY",
+        "PARITY":         "PARITY",
+        "INFERIORITY":    "INFERIORITY",
+        "UNMATCHED":      "UNMATCHED",
+        "EXCLUSIVE_GLOVO": "Exclusive Glovo",
+    }
+    return f"{icons.get(label, '')} {display.get(label, label)}"
 
 
 def metric_delta_color(val: float) -> str:
@@ -906,7 +916,7 @@ def tab_city_parity(sel_weeks, sel_cities, prime: bool = False):
 
             if not _dd.empty:
                 # Filtro per direzione del cambio
-                _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3}
+                _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3, "EXCLUSIVE_GLOVO": 4}
                 _dd["_std_rank"]   = _dd["standard_parity"].map(_parity_rank).fillna(9)
                 _dd["_prime_rank"] = _dd["prime_parity"].map(_parity_rank).fillna(9)
                 _dd["direzione"] = _dd.apply(
@@ -1116,7 +1126,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
 
     # [C] Badge Prime Boost — colonna aggiuntiva quando prime=True
     if prime:
-        _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3}
+        _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3, "EXCLUSIVE_GLOVO": 4}
         _std_df = load_store_parity()
         if not _std_df.empty and sel_weeks:
             _std_filtered = _std_df[_std_df["week_num"].isin(sel_weeks)]
@@ -1185,9 +1195,10 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
             return ""
         colors = {
             "SUPERIORITY": "background-color: #d0f0ea; color: #00614e",
-            "PARITY":      "background-color: #FFF8D0; color: #7a6300",
-            "INFERIORITY": "background-color: #fee2e2; color: #991b1b",
-            "UNMATCHED":   "background-color: #f1f5f9; color: #475569",
+            "PARITY":          "background-color: #FFF8D0; color: #7a6300",
+            "INFERIORITY":     "background-color: #fee2e2; color: #991b1b",
+            "UNMATCHED":       "background-color: #f1f5f9; color: #475569",
+            "EXCLUSIVE_GLOVO": "background-color: #ede9fe; color: #5b21b6",
         }
         return colors.get(str(val).strip(), "")
 
@@ -1252,7 +1263,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
 
         # [C] Badge confronto Standard vs Prime nel drill-down
         if prime and _std_latest is not None:
-            _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3}
+            _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3, "EXCLUSIVE_GLOVO": 4}
             _std_p   = str(_std_latest.get("parity", ""))
             _prime_p = str(latest.get("parity", ""))
             _sr = _parity_rank.get(_std_p, 9)
@@ -1758,7 +1769,7 @@ def tab_trend(sel_weeks, sel_cities):
         s_latest   = store_full[store_full["week_num"] == latest_wk].copy()
         if sel_cities:
             s_latest = s_latest[s_latest["city_code"].isin(sel_cities)]
-        matched_s  = s_latest[s_latest["parity"] != "UNMATCHED"]
+        matched_s  = s_latest[~s_latest["parity"].isin(["UNMATCHED", "EXCLUSIVE_GLOVO"])]
 
         col_g8, col_d8 = st.columns(2)
 

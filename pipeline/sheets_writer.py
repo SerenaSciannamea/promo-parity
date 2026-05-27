@@ -132,7 +132,11 @@ def _upsert_sheet(
     headers = combined.columns.tolist()
     ws.append_row(headers)
     if len(combined) > 0:
-        ws.append_rows(combined.fillna("").values.tolist())
+        rows = combined.fillna("").values.tolist()
+        # Chunk da 50k righe per evitare timeout con dataset grandi (es. glovo_products)
+        chunk_size = 50_000
+        for i in range(0, len(rows), chunk_size):
+            ws.append_rows(rows[i:i + chunk_size])
 
     return len(combined)
 
