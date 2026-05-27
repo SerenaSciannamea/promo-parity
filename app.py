@@ -1414,13 +1414,27 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                     bg = "background-color: #fef9c3" if row.get("has_active_promo", "N") == "Y" else ""
                     return [bg] * len(row)
 
-                n_promo = (disp_g.get("has_active_promo", pd.Series(dtype=str)) == "Y").sum() if "has_active_promo" in disp_g.columns else 0
+                if "has_active_promo" in disp_g.columns:
+                    n_promo = (disp_g["has_active_promo"] == "Y").sum()
+                else:
+                    # Fallback: usa glovo_promo_products da store_parity (più affidabile)
+                    try:
+                        n_promo = int(float(latest.get("glovo_promo_products", 0) or 0))
+                    except (ValueError, TypeError):
+                        n_promo = 0
                 st.caption(f"{len(gp)} prodotti · {n_promo} in promozione")
+                _has_promo_col = "has_active_promo" in gp.columns
+                styled_g = disp_g[show_cols_g].style.apply(
+                    lambda row: [
+                        "background-color: #FFF8D0; color:#7a6300"
+                        if _has_promo_col and gp.loc[row.name, "has_active_promo"] == "Y"
+                        else ""
+                        for _ in row
+                    ],
+                    axis=1,
+                )
                 st.dataframe(
-                    disp_g[show_cols_g].style.apply(
-                        lambda row: ["background-color: #FFF8D0; color:#7a6300" if gp.loc[row.name, "has_active_promo"] == "Y" else "" for _ in row],
-                        axis=1,
-                    ),
+                    styled_g,
                     use_container_width=True,
                     hide_index=True,
                     height=350,
