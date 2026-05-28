@@ -1423,11 +1423,15 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                     except (ValueError, TypeError):
                         n_promo = 0
                 st.caption(f"{len(gp)} prodotti · {n_promo} in promozione")
-                _has_promo_col = "has_active_promo" in gp.columns
+                # Pre-computa i flag di highlight come Series indicizzata su disp_g
+                # (evita df.loc[row.name, col] che crasha se la colonna manca)
+                _promo_flags_g = (
+                    gp["has_active_promo"].reindex(disp_g.index).fillna("N") == "Y"
+                ) if "has_active_promo" in gp.columns else pd.Series(False, index=disp_g.index)
                 styled_g = disp_g[show_cols_g].style.apply(
                     lambda row: [
                         "background-color: #FFF8D0; color:#7a6300"
-                        if _has_promo_col and gp.loc[row.name, "has_active_promo"] == "Y"
+                        if _promo_flags_g.get(row.name, False)
                         else ""
                         for _ in row
                     ],
@@ -1492,13 +1496,19 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                     n_prime = (gpp.get("has_active_promo_p", pd.Series(dtype=str)).str.upper() == "Y").sum()
                     n_np    = (gpp.get("has_active_promo_np", pd.Series(dtype=str)).str.upper() == "Y").sum()
                     st.caption(f"{len(gpp)} prodotti · {n_prime} ⭐ prime · {n_np} ✅ non-prime")
+                    _promo_flags_p  = (
+                        gpp["has_active_promo_p"].reindex(disp_pp.index).fillna("N").str.upper() == "Y"
+                    ) if "has_active_promo_p" in gpp.columns else pd.Series(False, index=disp_pp.index)
+                    _promo_flags_np = (
+                        gpp["has_active_promo_np"].reindex(disp_pp.index).fillna("N").str.upper() == "Y"
+                    ) if "has_active_promo_np" in gpp.columns else pd.Series(False, index=disp_pp.index)
                     st.dataframe(
                         disp_pp[show_pp].style.apply(
                             lambda row: [
                                 "background-color:#ede9fe;color:#4c1d95"
-                                if str(gpp.loc[row.name, "has_active_promo_p"]).upper() == "Y"
+                                if _promo_flags_p.get(row.name, False)
                                 else "background-color:#FFF8D0;color:#7a6300"
-                                if str(gpp.loc[row.name, "has_active_promo_np"]).upper() == "Y"
+                                if _promo_flags_np.get(row.name, False)
                                 else ""
                                 for _ in row
                             ],
