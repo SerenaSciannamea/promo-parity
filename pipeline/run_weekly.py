@@ -196,6 +196,18 @@ def init_db(conn: sqlite3.Connection) -> None:
     """)
     conn.commit()
 
+    # ---- Migrazioni strutturali (aggiunge colonne nuove senza ricreare il DB) ----
+    _migrations = [
+        ("city_parity",       "n_exclusive_glovo", "INTEGER DEFAULT 0"),
+        ("city_parity_prime", "n_exclusive_glovo", "INTEGER DEFAULT 0"),
+    ]
+    for _tbl, _col, _typedef in _migrations:
+        try:
+            conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typedef}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # colonna già esistente
+
 
 def upsert_df(conn: sqlite3.Connection, table: str, df: pd.DataFrame) -> int:
     """
