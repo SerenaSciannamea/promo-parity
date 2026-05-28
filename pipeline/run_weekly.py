@@ -435,6 +435,21 @@ def run_pipeline(
     print(f"\n[DB] {n1} store_parity | {n2} city_parity | {n3} glovo_products -> {db_path}")
     print(f"[DB] {n4} store_parity_prime | {n5} city_parity_prime | {n6} glovo_products_prime (vista Prime)")
 
+    # ---- Quality checks automatici ----
+    print(f"\n[QC] Avvio quality checks...")
+    try:
+        from pipeline.data_quality import run_quality_checks
+        quality_report = run_quality_checks(
+            store_parity      = store_parity,
+            deliveroo_df      = deliveroo_df,
+            week_num          = week,
+            weekly_dir        = WEEKLY_DIR,
+            deliveroo_csv_path= DELIVEROO_DEDUPED,
+        )
+    except Exception as _qc_err:
+        print(f"[QC] ERRORE quality checks: {_qc_err}")
+        quality_report = None
+
     # ---- Salva CSV settimanali ----
     if save_csv:
         WEEKLY_DIR.mkdir(parents=True, exist_ok=True)
@@ -448,6 +463,15 @@ def run_pipeline(
         city_parity_prime.to_csv(city_prime_path,   index=False, encoding="utf-8")
         print(f"[CSV] Salvati: {store_path.name} | {city_path.name}")
         print(f"[CSV] Salvati: {store_prime_path.name} | {city_prime_path.name}")
+
+        if quality_report is not None:
+            if not quality_report.priority_actions.empty:
+                pa_path = WEEKLY_DIR / f"priority_actions_{week}.csv"
+                quality_report.priority_actions.to_csv(pa_path, index=False, encoding="utf-8")
+                print(f"[CSV] Salvato: {pa_path.name}")
+            ph_path = WEEKLY_DIR / f"pipeline_health_{week}.csv"
+            quality_report.to_dataframe().to_csv(ph_path, index=False, encoding="utf-8")
+            print(f"[CSV] Salvato: {ph_path.name}")
 
     # ---- Export su Google Sheets (opzionale) ----
     if sheets_id and sheets_sa:
@@ -479,7 +503,10 @@ def run_pipeline(
                 deliveroo_products = deliveroo_products_raw[dp_cols_present] if dp_cols_present else None
             else:
                 deliveroo_products = None
-            export_to_sheets(
+            _priority_df = quality_report.priority_actions if quality_report is not None else None
+            _health_df   = quality_report.to_dataframe()   if quality_report is not None else None
+
+            sheets_result = export_to_sheets(
                 spreadsheet_id       = sheets_id,
                 service_account_info = sheets_sa,
                 store_parity         = store_parity,
@@ -490,8 +517,28 @@ def run_pipeline(
                 deliveroo_products   = deliveroo_products,
                 store_parity_prime   = store_parity_prime    if len(store_parity_prime) > 0    else None,
                 city_parity_prime    = city_parity_prime     if len(city_parity_prime)  > 0    else None,
+                priority_actions     = _priority_df          if _priority_df is not None and len(_priority_df) > 0 else None,
+                pipeline_health      = _health_df            if _health_df   is not None and len(_health_df)   > 0 else None,
             )
             print(f"[GSheets] Export completato")
+
+            # ---- Auto-repair tab falliti ----
+            failed_tabs = [t for t, n in sheets_result.items() if n == -1]
+            if failed_tabs:
+                print(f"[GSheets] {len(failed_tabs)} tab falliti, avvio auto-repair: {failed_tabs}")
+                try:
+                    from pipeline.sheets_repair import repair_tab, TAB_SOURCES
+                    from pipeline.sheets_writer import _get_client
+                    _client_r = _get_client(sheets_sa)
+                    _sh_r     = _client_r.open_by_key(sheets_id)
+                    for _tab in failed_tabs:
+                        if _tab in TAB_SOURCES:
+                            _csvs = TAB_SOURCES[_tab]([week])
+                            repair_tab(_sh_r, _tab, _csvs)
+                        else:
+                            print(f"[auto-repair] Tab '{_tab}' non in TAB_SOURCES, skip.")
+                except Exception as _re:
+                    print(f"[auto-repair] ERRORE: {_re}")
         except Exception as e:
             print(f"[GSheets] ERRORE export: {e}")
 

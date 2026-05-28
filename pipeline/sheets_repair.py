@@ -36,6 +36,7 @@ from pipeline.sheets_writer import (
     TAB_STORE_PARITY_PRIME, TAB_CITY_PARITY_PRIME,
     TAB_GLOVO_PRODUCTS, TAB_DELIVEROO_PRODUCTS,
     TAB_STORE_MAPPING, TAB_NEEDS_REVIEW,
+    TAB_PRIORITY_ACTIONS, TAB_PIPELINE_HEALTH,
 )
 
 # ---------------------------------------------------------------------------
@@ -79,6 +80,12 @@ TAB_SOURCES: dict[str, callable] = {
     ] if (OUTPUT_DIR / "deliveroo_promo_products.csv").exists() else [],
     TAB_STORE_MAPPING:      lambda weeks: [(DATA_DIR / "store_mapping.csv", "")],
     TAB_NEEDS_REVIEW:       lambda weeks: [(DATA_DIR / "needs_review.csv", "")],
+    TAB_PRIORITY_ACTIONS:   lambda weeks: [
+        (f, w) for f, w in _find_weekly_csvs("priority_actions") if not weeks or w in weeks
+    ],
+    TAB_PIPELINE_HEALTH:    lambda weeks: [
+        (f, w) for f, w in _find_weekly_csvs("pipeline_health") if not weeks or w in weeks
+    ],
 }
 
 DELIVEROO_PRODUCTS_COLS = [

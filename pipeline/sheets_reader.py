@@ -34,6 +34,8 @@ TAB_GLOVO_PRODUCTS     = "glovo_products"
 TAB_DELIVEROO_PRODUCTS = "deliveroo_products"
 TAB_STORE_PARITY_PRIME = "store_parity_prime"
 TAB_CITY_PARITY_PRIME  = "city_parity_prime"
+TAB_PRIORITY_ACTIONS   = "priority_actions"
+TAB_PIPELINE_HEALTH    = "pipeline_health"
 
 MANUAL_COLS = [
     "city_code", "glovo_name", "glovo_store_id",
@@ -187,6 +189,8 @@ def read_all(
     deliveroo_products = _read_tab(sheet, TAB_DELIVEROO_PRODUCTS)
     store_parity_prime = _read_tab(sheet, TAB_STORE_PARITY_PRIME)
     city_parity_prime  = _read_tab(sheet, TAB_CITY_PARITY_PRIME)
+    priority_actions   = _read_tab(sheet, TAB_PRIORITY_ACTIONS)
+    pipeline_health    = _read_tab(sheet, TAB_PIPELINE_HEALTH)
 
     # Cast numerici prodotti Glovo
     for col in ["avg_percentage_off", "avg_unit_price", "total_product_sold"]:
@@ -209,6 +213,11 @@ def read_all(
         if col in city_parity_prime.columns:
             city_parity_prime[col] = pd.to_numeric(city_parity_prime[col], errors="coerce")
 
+    # Cast numerici priority_actions
+    for col in ["revenue", "glovo_pct_off", "promo_coverage_pct", "priority"]:
+        if col in priority_actions.columns:
+            priority_actions[col] = pd.to_numeric(priority_actions[col], errors="coerce")
+
     return {
         TAB_STORE_PARITY:       store_parity,
         TAB_CITY_PARITY:        city_parity,
@@ -218,6 +227,8 @@ def read_all(
         TAB_DELIVEROO_PRODUCTS: deliveroo_products,
         TAB_STORE_PARITY_PRIME: store_parity_prime,
         TAB_CITY_PARITY_PRIME:  city_parity_prime,
+        TAB_PRIORITY_ACTIONS:   priority_actions,
+        TAB_PIPELINE_HEALTH:    pipeline_health,
     }
 
 

@@ -378,6 +378,42 @@ def _cloud_deliveroo_names() -> dict[str, list[str]]:
     return result
 
 
+def _cloud_priority_actions() -> pd.DataFrame:
+    return _cloud_load_all().get("priority_actions", pd.DataFrame())
+
+
+def _cloud_pipeline_health() -> pd.DataFrame:
+    return _cloud_load_all().get("pipeline_health", pd.DataFrame())
+
+
+def _local_priority_actions() -> pd.DataFrame:
+    """Calcola live da store_parity SQLite: INFERIORITY ordinati per revenue."""
+    conn = _get_sqlite_conn()
+    if conn is None:
+        return pd.DataFrame()
+    try:
+        df = pd.read_sql(
+            """SELECT city_code, glovo_name, deliveroo_name, parity,
+                      glovo_rank_label, deliveroo_rank_label,
+                      revenue, glovo_pct_off, promo_coverage_pct, week_num
+               FROM store_parity
+               WHERE parity = 'INFERIORITY'
+               ORDER BY week_num DESC, CAST(revenue AS REAL) DESC
+               LIMIT 30""",
+            conn,
+        )
+        df["action"]   = "Allinea promo Glovo a Deliveroo"
+        df["priority"] = range(1, len(df) + 1)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def _local_pipeline_health() -> pd.DataFrame:
+    """In locale non abbiamo pipeline_health persistito: ritorna vuoto."""
+    return pd.DataFrame()
+
+
 # ---------------------------------------------------------------------------
 # Facade: funzioni uniformi usate dall'app
 # ---------------------------------------------------------------------------
@@ -400,6 +436,16 @@ def load_store_parity_prime() -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def load_city_parity_prime() -> pd.DataFrame:
     return _cloud_city_parity_prime() if _is_cloud_mode() else _local_city_parity_prime()
+
+
+@st.cache_data(ttl=300)
+def load_priority_actions() -> pd.DataFrame:
+    return _cloud_priority_actions() if _is_cloud_mode() else _local_priority_actions()
+
+
+@st.cache_data(ttl=300)
+def load_pipeline_health() -> pd.DataFrame:
+    return _cloud_pipeline_health() if _is_cloud_mode() else _local_pipeline_health()
 
 
 def load_glovo_products_prime(city_code: str, store_name: str, week_num: str) -> pd.DataFrame:
@@ -2083,6 +2129,127 @@ def tab_store_matching():
 
 
 # ---------------------------------------------------------------------------
+# TAB 6 — Pipeline: azioni prioritarie + salute pipeline
+# ---------------------------------------------------------------------------
+
+def tab_pipeline(sel_weeks: list[str], sel_cities: list[str]) -> None:
+    st.header("🎯 Azioni Prioritarie")
+    st.caption(
+        "Store in **INFERIORITY** ordinati per revenue decrescente — "
+        "quelli con impatto economico più alto da allineare subito."
+    )
+
+    df = load_priority_actions()
+
+    if df.empty:
+        st.info("Nessuna azione prioritaria disponibile. "
+                "Esegui la pipeline per aggiornare i dati.")
+    else:
+        # Filtra per settimana/città se applicabile
+        if sel_weeks and "week_num" in df.columns:
+            df = df[df["week_num"].isin(sel_weeks)]
+        if sel_cities and "city_code" in df.columns:
+            df = df[df["city_code"].isin(sel_cities)]
+
+        # KPI in cima
+        n_stores = len(df)
+        total_rev = pd.to_numeric(df.get("revenue", pd.Series(dtype=float)), errors="coerce").sum()
+        k1, k2 = st.columns(2)
+        k1.metric("Store prioritari", n_stores)
+        k2.metric("Revenue totale a rischio", f"€ {total_rev:,.0f}" if total_rev > 0 else "n/d")
+
+        st.divider()
+
+        # Tabella azioni
+        disp_cols = ["priority", "city_code", "glovo_name", "deliveroo_name",
+                     "glovo_rank_label", "deliveroo_rank_label",
+                     "revenue", "glovo_pct_off", "promo_coverage_pct",
+                     "week_num", "action"]
+        disp_cols_present = [c for c in disp_cols if c in df.columns]
+        disp = df[disp_cols_present].copy()
+
+        # Formatta revenue
+        if "revenue" in disp.columns:
+            disp["revenue"] = pd.to_numeric(disp["revenue"], errors="coerce")
+
+        st.dataframe(
+            disp.style.background_gradient(
+                subset=["revenue"] if "revenue" in disp.columns else [],
+                cmap="Reds",
+                low=0.2,
+            ),
+            use_container_width=True,
+            hide_index=True,
+            height=min(40 + 35 * n_stores, 600),
+        )
+
+        st.download_button(
+            "📥 Esporta azioni prioritarie CSV",
+            data=disp.to_csv(index=False).encode("utf-8"),
+            file_name=f"priority_actions_{sel_weeks[-1] if sel_weeks else 'latest'}.csv",
+            mime="text/csv",
+        )
+
+    # ---- Salute pipeline ----
+    st.divider()
+    st.header("🚦 Salute Pipeline")
+    st.caption("Anomalie e check automatici eseguiti a ogni run della pipeline.")
+
+    health = load_pipeline_health()
+
+    if health.empty:
+        st.info(
+            "Nessun report di salute disponibile. "
+            "Il report viene generato automaticamente a ogni esecuzione della pipeline."
+        )
+    else:
+        # Filtra per settimana se applicabile
+        if sel_weeks and "week_num" in health.columns:
+            health = health[health["week_num"].isin(sel_weeks)]
+
+        if health.empty:
+            st.info("Nessun dato per i filtri selezionati.")
+        else:
+            latest_week = health["week_num"].max() if "week_num" in health.columns else ""
+            latest = health[health["week_num"] == latest_week] if latest_week else health
+
+            # Sommario testuale
+            errors   = latest[latest["level"] == "ERROR"]   if "level" in latest.columns else pd.DataFrame()
+            warnings = latest[latest["level"] == "WARNING"]  if "level" in latest.columns else pd.DataFrame()
+
+            if len(errors) > 0:
+                st.error(f"🔴 **{len(errors)} errore/i** rilevato/i nell'ultima run ({latest_week})")
+            elif len(warnings) > 0:
+                st.warning(f"🟡 **{len(warnings)} warning** nell'ultima run ({latest_week})")
+            else:
+                st.success(f"✅ Pipeline OK — nessun problema ({latest_week})")
+
+            # Colora per livello
+            level_colors = {
+                "ERROR":   "background-color: #fee2e2; color: #991b1b",
+                "WARNING": "background-color: #fef9c3; color: #713f12",
+                "INFO":    "background-color: #f0fdf4; color: #166534",
+            }
+
+            def _color_row(row):
+                level = row.get("level", "INFO")
+                style = level_colors.get(level, "")
+                return [style] * len(row)
+
+            disp_h = latest.reset_index(drop=True)
+            st.dataframe(
+                disp_h.style.apply(_color_row, axis=1),
+                use_container_width=True,
+                hide_index=True,
+                height=min(60 + 35 * len(disp_h), 500),
+            )
+
+            # Storico settimane
+            with st.expander("📅 Storico completo"):
+                st.dataframe(health, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -2186,12 +2353,13 @@ def main():
     _css_tabs += "</style>"
     st.markdown(_css_tabs, unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "City Parity",
         "Store Detail",
         "Trend",
         "Store Matching",
         "Prime",
+        "🎯 Azioni",
     ])
 
     with tab1:
@@ -2206,6 +2374,8 @@ def main():
         tab_city_parity(sel_weeks, sel_cities, prime=True)
         st.divider()
         tab_store_detail(sel_weeks, sel_cities, prime=True)
+    with tab6:
+        tab_pipeline(sel_weeks, sel_cities)
 
 
 if __name__ == "__main__":
