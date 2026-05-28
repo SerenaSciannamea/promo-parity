@@ -200,6 +200,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrations = [
         ("city_parity",       "n_exclusive_glovo", "INTEGER DEFAULT 0"),
         ("city_parity_prime", "n_exclusive_glovo", "INTEGER DEFAULT 0"),
+        ("store_parity",      "deliveroo_pct_off",  "REAL"),
+        ("store_parity_prime","deliveroo_pct_off",  "REAL"),
     ]
     for _tbl, _col, _typedef in _migrations:
         try:

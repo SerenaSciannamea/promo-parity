@@ -289,7 +289,7 @@ def compute_priority_actions(
 
     cols = ["city_code", "glovo_name", "deliveroo_name", "parity",
             "glovo_rank_label", "deliveroo_rank_label", "revenue",
-            "glovo_pct_off", "promo_coverage_pct"]
+            "glovo_pct_off", "deliveroo_pct_off", "promo_coverage_pct"]
     cols_present = [c for c in cols if c in inf.columns]
     result = inf[cols_present].head(top_n).copy()
     result["week_num"]  = week_num

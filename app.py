@@ -395,7 +395,7 @@ def _local_priority_actions() -> pd.DataFrame:
         df = pd.read_sql(
             """SELECT city_code, glovo_name, deliveroo_name, parity,
                       glovo_rank_label, deliveroo_rank_label,
-                      revenue, glovo_pct_off, promo_coverage_pct, week_num
+                      revenue, glovo_pct_off, deliveroo_pct_off, promo_coverage_pct, week_num
                FROM store_parity
                WHERE parity = 'INFERIORITY'
                ORDER BY week_num DESC, CAST(revenue AS REAL) DESC
@@ -2163,7 +2163,7 @@ def tab_pipeline(sel_weeks: list[str], sel_cities: list[str]) -> None:
         # Tabella azioni
         disp_cols = ["priority", "city_code", "glovo_name", "deliveroo_name",
                      "glovo_rank_label", "deliveroo_rank_label",
-                     "revenue", "glovo_pct_off", "promo_coverage_pct",
+                     "revenue", "glovo_pct_off", "deliveroo_pct_off", "promo_coverage_pct",
                      "week_num", "action"]
         disp_cols_present = [c for c in disp_cols if c in df.columns]
         disp = df[disp_cols_present].copy()

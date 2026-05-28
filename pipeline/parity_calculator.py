@@ -111,6 +111,7 @@ def compute_store_parity(
             "deliveroo_rank_label": rank_label(deliveroo_rank),
             "parity":               parity,
             "glovo_pct_off":        row.get("avg_pct_off"),
+            "deliveroo_pct_off":    round(deliveroo_pct, 1) if deliveroo_pct else None,
             "glovo_promo_products": int(row.get("promo_product_count", 0)),
             "revenue":              float(row.get("revenue", 0)),
             "promo_coverage_pct":   float(row.get("promo_coverage_pct", 0)),
