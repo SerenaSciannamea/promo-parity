@@ -2168,27 +2168,12 @@ def tab_pipeline(sel_weeks: list[str], sel_cities: list[str]) -> None:
         disp_cols_present = [c for c in disp_cols if c in df.columns]
         disp = df[disp_cols_present].copy()
 
-        # Formatta revenue (numerico, NaN → 0 per evitare crash gradient)
+        # Formatta revenue come numerico
         if "revenue" in disp.columns:
-            disp["revenue"] = pd.to_numeric(disp["revenue"], errors="coerce").fillna(0)
-
-        # Applica gradient solo se la colonna esiste E ha valori non-zero
-        _rev_ok = (
-            "revenue" in disp.columns
-            and disp["revenue"].dtype.kind in ("f", "i")
-            and disp["revenue"].sum() > 0
-        )
-        _styled = disp.style
-        if _rev_ok:
-            try:
-                _styled = _styled.background_gradient(
-                    subset=["revenue"], cmap="Reds", low=0.2
-                )
-            except Exception:
-                pass  # mai crashare per un colore
+            disp["revenue"] = pd.to_numeric(disp["revenue"], errors="coerce")
 
         st.dataframe(
-            _styled,
+            disp,
             use_container_width=True,
             hide_index=True,
             height=min(40 + 35 * n_stores, 600),
@@ -2242,14 +2227,9 @@ def tab_pipeline(sel_weeks: list[str], sel_cities: list[str]) -> None:
                 "INFO":    "background-color: #f0fdf4; color: #166534",
             }
 
-            def _color_row(row):
-                level = row.get("level", "INFO")
-                style = level_colors.get(level, "")
-                return [style] * len(row)
-
             disp_h = latest.reset_index(drop=True)
             st.dataframe(
-                disp_h.style.apply(_color_row, axis=1),
+                disp_h,
                 use_container_width=True,
                 hide_index=True,
                 height=min(60 + 35 * len(disp_h), 500),
