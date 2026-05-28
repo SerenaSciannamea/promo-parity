@@ -2132,6 +2132,82 @@ def tab_store_matching():
 # TAB 6 — Pipeline: azioni prioritarie + salute pipeline
 # ---------------------------------------------------------------------------
 
+_GLOVO_YELLOW    = "#FFC244"   # giallo Glovo
+_DELIVEROO_BLUE  = "#00CCBC"   # teal Deliveroo
+
+# Mapping colonna → etichetta leggibile + brand
+_PA_COLS = [
+    ("priority",           "#",              None),
+    ("city_code",          "Città",          None),
+    ("glovo_name",         "Store Glovo",    "glovo"),
+    ("deliveroo_name",     "Store Deliveroo","deliveroo"),
+    ("glovo_rank_label",   "Promo Glovo",    "glovo"),
+    ("deliveroo_rank_label","Promo Deliveroo","deliveroo"),
+    ("revenue",            "Revenue (€)",    None),
+    ("glovo_pct_off",      "% Glovo",        "glovo"),
+    ("deliveroo_pct_off",  "% Deliveroo",    "deliveroo"),
+    ("promo_coverage_pct", "Copertura %",    None),
+    ("week_num",           "Settimana",      None),
+]
+
+
+def _priority_table_html(df: pd.DataFrame) -> str:
+    """Genera tabella HTML con header colorati per brand e colonne a larghezza fissa uguale."""
+    cols_in_df = [(col, label, brand) for col, label, brand in _PA_COLS if col in df.columns]
+    n = len(cols_in_df)
+    col_w = f"{100 / n:.1f}%"
+
+    # Header
+    hdr = ""
+    for _, label, brand in cols_in_df:
+        if brand == "glovo":
+            bg, fg = _GLOVO_YELLOW, "#1a1a1a"
+        elif brand == "deliveroo":
+            bg, fg = _DELIVEROO_BLUE, "#ffffff"
+        else:
+            bg, fg = "#e8eaed", "#1a1a1a"
+        hdr += (
+            f'<th style="background:{bg};color:{fg};text-align:center;'
+            f'padding:8px 4px;font-size:12px;font-weight:600;'
+            f'width:{col_w};white-space:nowrap;border:1px solid #d1d5db">'
+            f'{label}</th>'
+        )
+
+    # Rows
+    body = ""
+    for i, (_, row) in enumerate(df.iterrows()):
+        bg_row = "#ffffff" if i % 2 == 0 else "#f9fafb"
+        cells = ""
+        for col, _, _ in cols_in_df:
+            val = row.get(col, "")
+            if pd.isna(val):
+                val = "—"
+            elif col == "revenue":
+                try:
+                    val = f"€ {float(val):,.0f}"
+                except Exception:
+                    pass
+            elif col in ("glovo_pct_off", "deliveroo_pct_off", "promo_coverage_pct"):
+                try:
+                    val = f"{float(val):.1f}%"
+                except Exception:
+                    val = "—" if str(val).strip() == "" else val
+            cells += (
+                f'<td style="background:{bg_row};text-align:center;'
+                f'padding:7px 4px;font-size:12px;border:1px solid #e5e7eb;'
+                f'width:{col_w}">{val}</td>'
+            )
+        body += f"<tr>{cells}</tr>"
+
+    return (
+        '<div style="overflow-x:auto;margin-top:8px">'
+        f'<table style="width:100%;table-layout:fixed;border-collapse:collapse">'
+        f"<thead><tr>{hdr}</tr></thead>"
+        f"<tbody>{body}</tbody>"
+        "</table></div>"
+    )
+
+
 def tab_pipeline(sel_weeks: list[str], sel_cities: list[str]) -> None:
     st.header("🎯 Azioni Prioritarie")
     st.caption(
@@ -2160,28 +2236,17 @@ def tab_pipeline(sel_weeks: list[str], sel_cities: list[str]) -> None:
 
         st.divider()
 
-        # Tabella azioni
-        disp_cols = ["priority", "city_code", "glovo_name", "deliveroo_name",
-                     "glovo_rank_label", "deliveroo_rank_label",
-                     "revenue", "glovo_pct_off", "deliveroo_pct_off", "promo_coverage_pct",
-                     "week_num", "action"]
-        disp_cols_present = [c for c in disp_cols if c in df.columns]
-        disp = df[disp_cols_present].copy()
-
-        # Formatta revenue come numerico
+        # Formatta revenue come numerico nel DF base (per download)
+        disp = df.copy()
         if "revenue" in disp.columns:
             disp["revenue"] = pd.to_numeric(disp["revenue"], errors="coerce")
 
-        st.dataframe(
-            disp,
-            use_container_width=True,
-            hide_index=True,
-            height=min(40 + 35 * n_stores, 600),
-        )
+        # Tabella HTML stilizzata
+        st.markdown(_priority_table_html(disp), unsafe_allow_html=True)
 
         st.download_button(
             "📥 Esporta azioni prioritarie CSV",
-            data=disp.to_csv(index=False).encode("utf-8"),
+            data=disp[[c for c, _, _ in _PA_COLS if c in disp.columns]].to_csv(index=False).encode("utf-8"),
             file_name=f"priority_actions_{sel_weeks[-1] if sel_weeks else 'latest'}.csv",
             mime="text/csv",
         )
