@@ -20,11 +20,37 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
+
+# ---------------------------------------------------------------------------
+# Helper difensivo globale — usato ovunque al posto di df["col"]
+# ---------------------------------------------------------------------------
+
+def _col(df: pd.DataFrame, col: str, default: Any = "") -> "pd.Series":
+    """
+    Ritorna df[col] se la colonna esiste, altrimenti una Series piena di `default`.
+    Previene KeyError quando le colonne del DataFrame non matchano quelle attese.
+    """
+    if col in df.columns:
+        return df[col]
+    return pd.Series(default, index=df.index, dtype=object)
+
+
+def _safe_flags(df: pd.DataFrame, col: str, value: Any = "Y") -> "pd.Series[bool]":
+    """
+    Ritorna una Series booleana: True dove df[col] == value.
+    Se la colonna non esiste, ritorna tutta False (nessun highlight, nessun crash).
+    """
+    if col in df.columns:
+        return df[col].fillna("").astype(str).str.upper() == str(value).upper()
+    return pd.Series(False, index=df.index)
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -1423,11 +1449,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                     except (ValueError, TypeError):
                         n_promo = 0
                 st.caption(f"{len(gp)} prodotti · {n_promo} in promozione")
-                # Pre-computa i flag di highlight come Series indicizzata su disp_g
-                # (evita df.loc[row.name, col] che crasha se la colonna manca)
-                _promo_flags_g = (
-                    gp["has_active_promo"].reindex(disp_g.index).fillna("N") == "Y"
-                ) if "has_active_promo" in gp.columns else pd.Series(False, index=disp_g.index)
+                _promo_flags_g = _safe_flags(gp, "has_active_promo").reindex(disp_g.index).fillna(False)
                 styled_g = disp_g[show_cols_g].style.apply(
                     lambda row: [
                         "background-color: #FFF8D0; color:#7a6300"
@@ -1496,12 +1518,8 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                     n_prime = (gpp.get("has_active_promo_p", pd.Series(dtype=str)).str.upper() == "Y").sum()
                     n_np    = (gpp.get("has_active_promo_np", pd.Series(dtype=str)).str.upper() == "Y").sum()
                     st.caption(f"{len(gpp)} prodotti · {n_prime} ⭐ prime · {n_np} ✅ non-prime")
-                    _promo_flags_p  = (
-                        gpp["has_active_promo_p"].reindex(disp_pp.index).fillna("N").str.upper() == "Y"
-                    ) if "has_active_promo_p" in gpp.columns else pd.Series(False, index=disp_pp.index)
-                    _promo_flags_np = (
-                        gpp["has_active_promo_np"].reindex(disp_pp.index).fillna("N").str.upper() == "Y"
-                    ) if "has_active_promo_np" in gpp.columns else pd.Series(False, index=disp_pp.index)
+                    _promo_flags_p  = _safe_flags(gpp, "has_active_promo_p").reindex(disp_pp.index).fillna(False)
+                    _promo_flags_np = _safe_flags(gpp, "has_active_promo_np").reindex(disp_pp.index).fillna(False)
                     st.dataframe(
                         disp_pp[show_pp].style.apply(
                             lambda row: [
