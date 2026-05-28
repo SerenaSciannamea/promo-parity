@@ -478,7 +478,7 @@ def run_pipeline(
         print(f"\n[GSheets] Export su Google Sheets...")
         try:
             from pipeline.sheets_writer import export_to_sheets
-            from pipeline.store_matcher import load_mapping, load_review_queue
+            from pipeline.store_matcher import load_review_queue
             mapping_df = load_mapping()
             review_df  = load_review_queue()
             # Carica prodotti Deliveroo dal file raw (product-level, non deduped)
