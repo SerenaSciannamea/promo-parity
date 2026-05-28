@@ -550,7 +550,7 @@ def load_deliveroo_products(city_code: str, restaurant_name: str, week_num: str 
         return pd.DataFrame()
 
     def _filter_and_return(df: pd.DataFrame) -> pd.DataFrame:
-        if df.empty:
+        if df.empty or "restaurant_name" not in df.columns or "city_code" not in df.columns:
             return pd.DataFrame()
         mask = (df["city_code"] == city_code) & (df["restaurant_name"] == restaurant_name)
         # Filtra per settimana — sempre applicato se week_num fornito
