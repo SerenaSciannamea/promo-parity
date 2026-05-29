@@ -1180,6 +1180,61 @@ def _store_table_html(df: pd.DataFrame) -> str:
     )
 
 
+def _products_table_html(
+    df: pd.DataFrame,
+    header_bg: str,
+    header_fg: str,
+    row_styles: "list[str] | None" = None,
+) -> str:
+    """
+    Tabella HTML per prodotti (Glovo / Deliveroo / Prime).
+    - header_bg / header_fg : colori dell'intestazione
+    - row_styles            : lista CSS per ogni riga (stessa lunghezza di df)
+                              es. "background:#FFF8D0;color:#7a6300"
+    """
+    cols = list(df.columns)
+    n = len(cols)
+    col_w = f"{100 / n:.1f}%"
+
+    hdr = ""
+    for col in cols:
+        hdr += (
+            f'<th style="background:{header_bg};color:{header_fg};text-align:center;'
+            f'padding:8px 4px;font-size:12px;font-weight:600;'
+            f'width:{col_w};word-break:break-word;border:1px solid #d1d5db">'
+            f'{col}</th>'
+        )
+
+    body = ""
+    for i, (_, row) in enumerate(df.iterrows()):
+        default_bg = "#ffffff" if i % 2 == 0 else "#f9fafb"
+        rs = row_styles[i] if (row_styles and i < len(row_styles) and row_styles[i]) else f"background:{default_bg};color:#1a1a1a"
+        cells = ""
+        for col in cols:
+            val = row.get(col, "")
+            try:
+                if pd.isna(val):
+                    val = ""
+            except Exception:
+                pass
+            val = "" if val is None else str(val)
+            cells += (
+                f'<td style="{rs};text-align:center;'
+                f'padding:7px 4px;font-size:12px;border:1px solid #e5e7eb;'
+                f'width:{col_w};word-break:break-word">{val}</td>'
+            )
+        body += f"<tr>{cells}</tr>"
+
+    return (
+        '<div style="overflow-x:auto;margin-top:8px;max-height:380px;'
+        'overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px">'
+        '<table style="width:100%;table-layout:fixed;border-collapse:collapse">'
+        f"<thead style='position:sticky;top:0;z-index:1'><tr>{hdr}</tr></thead>"
+        f"<tbody>{body}</tbody>"
+        "</table></div>"
+    )
+
+
 def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
     import base64 as _b64mod
     _icon = ROOT / "assets" / "storePhone.png"
@@ -1592,20 +1647,14 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                         n_promo = 0
                 st.caption(f"{len(gp)} prodotti · {n_promo} in promozione")
                 _promo_flags_g = _safe_flags(gp, "has_active_promo").reindex(disp_g.index).fillna(False)
-                styled_g = disp_g[show_cols_g].style.apply(
-                    lambda row: [
-                        "background-color: #FFF8D0; color:#7a6300"
-                        if _promo_flags_g.get(row.name, False)
-                        else ""
-                        for _ in row
-                    ],
-                    axis=1,
-                )
-                st.dataframe(
-                    styled_g,
-                    use_container_width=True,
-                    hide_index=True,
-                    height=350,
+                _g_df = disp_g[show_cols_g]
+                _g_styles = [
+                    "background:#FFF8D0;color:#7a6300" if _promo_flags_g.get(idx, False) else ""
+                    for idx in _g_df.index
+                ]
+                st.markdown(
+                    _products_table_html(_g_df, "#FFC244", "#1a1a1a", _g_styles),
+                    unsafe_allow_html=True,
                 )
 
         # ---- [E] Colonna Prime (solo tab prime) ----
@@ -1662,21 +1711,16 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                     st.caption(f"{len(gpp)} prodotti · {n_prime} ⭐ prime · {n_np} ✅ non-prime")
                     _promo_flags_p  = _safe_flags(gpp, "has_active_promo_p").reindex(disp_pp.index).fillna(False)
                     _promo_flags_np = _safe_flags(gpp, "has_active_promo_np").reindex(disp_pp.index).fillna(False)
-                    st.dataframe(
-                        disp_pp[show_pp].style.apply(
-                            lambda row: [
-                                "background-color:#ede9fe;color:#4c1d95"
-                                if _promo_flags_p.get(row.name, False)
-                                else "background-color:#FFF8D0;color:#7a6300"
-                                if _promo_flags_np.get(row.name, False)
-                                else ""
-                                for _ in row
-                            ],
-                            axis=1,
-                        ),
-                        use_container_width=True,
-                        hide_index=True,
-                        height=350,
+                    _pp_df = disp_pp[show_pp]
+                    _pp_styles = [
+                        "background:#ede9fe;color:#4c1d95" if _promo_flags_p.get(idx, False)
+                        else "background:#FFF8D0;color:#7a6300" if _promo_flags_np.get(idx, False)
+                        else ""
+                        for idx in _pp_df.index
+                    ]
+                    st.markdown(
+                        _products_table_html(_pp_df, "#7c3aed", "#ffffff", _pp_styles),
+                        unsafe_allow_html=True,
                     )
 
         # ---- Deliveroo ----
@@ -1727,17 +1771,16 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                 has_promo_col = "Promozione" in disp_d.columns
                 n_promo_d = (disp_d["Promozione"] != "").sum() if has_promo_col else 0
                 st.caption(f"{len(dp)} prodotti · {n_promo_d} in promozione")
-                st.dataframe(
-                    disp_d[show_cols_d].style.apply(
-                        lambda row: [
-                            "background-color: #d0f0ea; color:#00614e" if has_promo_col and disp_d.loc[row.name, "Promozione"] != "" else ""
-                            for _ in row
-                        ],
-                        axis=1,
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                    height=350,
+                _d_df = disp_d[show_cols_d]
+                _d_styles = [
+                    "background:#d0f0ea;color:#00614e"
+                    if (has_promo_col and disp_d.loc[idx, "Promozione"] != "")
+                    else ""
+                    for idx in _d_df.index
+                ]
+                st.markdown(
+                    _products_table_html(_d_df, "#00CCBC", "#ffffff", _d_styles),
+                    unsafe_allow_html=True,
                 )
 
 
