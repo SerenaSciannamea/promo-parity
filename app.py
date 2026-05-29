@@ -1166,7 +1166,7 @@ def _store_table_html(df: pd.DataFrame) -> str:
             cells += (
                 f'<td style="{cell_style};text-align:center;'
                 f'padding:7px 4px;font-size:12px;border:1px solid #e5e7eb;'
-                f'width:{col_w};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{val}</td>'
+                f'width:{col_w};word-break:break-word">{val}</td>'
             )
         body += f"<tr>{cells}</tr>"
 
