@@ -257,15 +257,20 @@ Write-Log "Pipeline parity completata"
 # ===========================================================================
 # Notifica di successo con riepilogo
 # ===========================================================================
+# Leggi il report qualità generato da run_weekly.py
+$reportFile = "$proj\data\last_pipeline_report.txt"
+$qualitySection = ""
+if (Test-Path $reportFile) {
+    $qualitySection = "`n`n" + (Get-Content $reportFile -Raw -Encoding UTF8)
+}
+
 $successBody = @"
 La pipeline settimanale e' terminata con successo.
 
 Settimana:  $currentWeek
 CSV Glovo:  $GlovoCsv
 Dashboard:  https://promo-parity.streamlit.app
-
-Controlla la dashboard per vedere i risultati aggiornati.
-"@
+"@ + $qualitySection
 
 Write-Log "===== Pipeline completata con successo ====="
 Send-Notify -Subject "Pipeline completata $currentWeek" -Body $successBody

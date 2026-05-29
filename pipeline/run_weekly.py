@@ -464,6 +464,26 @@ def run_pipeline(
         print(f"[QC] ERRORE quality checks: {_qc_err}")
         quality_report = None
 
+    # ---- Scrivi report leggibile da run_friday.ps1 per email ----
+    REPORT_PATH = ROOT / "data" / "last_pipeline_report.txt"
+    if quality_report is not None:
+        try:
+            lines = [quality_report.summary_text(), ""]
+            pa = quality_report.priority_actions
+            if not pa.empty:
+                lines.append("── Top 5 azioni prioritarie ──")
+                top5 = pa.head(5)
+                for _, r in top5.iterrows():
+                    rev   = f"€{float(r.get('revenue',0)):,.0f}" if r.get('revenue') else "n/d"
+                    g_pct = r.get('glovo_pct_off', '')
+                    d_pct = r.get('deliveroo_pct_off', '')
+                    gap   = f"  ({g_pct}% Glovo vs {d_pct}% Deliveroo)" if g_pct and d_pct else ""
+                    lines.append(f"  {int(r.get('priority',0))}. [{r.get('city_code','')}] "
+                                 f"{r.get('glovo_name','')} — {rev}{gap}")
+            REPORT_PATH.write_text("\n".join(lines), encoding="utf-8")
+        except Exception as _rp_err:
+            print(f"[QC] Impossibile scrivere report file: {_rp_err}")
+
     # ---- Salva CSV settimanali ----
     if save_csv:
         WEEKLY_DIR.mkdir(parents=True, exist_ok=True)
