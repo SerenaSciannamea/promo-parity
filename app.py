@@ -988,7 +988,27 @@ def tab_city_parity(sel_weeks, sel_cities, prime: bool = False):
         "Store matchati", "# Sup", "# Par", "# Inf",
         "% Sup (revenue)", "% Par (revenue)", "% Inf (revenue)", "Match coverage %"
     ]
-    st.dataframe(disp, column_config=_col_config_from_data(disp), use_container_width=True, hide_index=True)
+    _PARITY_BADGE_FG = {
+        "🟢 SUPERIORITY": "#00614e", "🟡 PARITY": "#7a6300",
+        "🔴 INFERIORITY": "#991b1b", "⚪ UNMATCHED": "#475569",
+        "🟣 Exclusive Glovo": "#5b21b6",
+    }
+    _PARITY_BADGE_BG = {
+        "🟢 SUPERIORITY": "#d0f0ea", "🟡 PARITY": "#FFF8D0",
+        "🔴 INFERIORITY": "#fee2e2", "⚪ UNMATCHED": "#f1f5f9",
+        "🟣 Exclusive Glovo": "#ede9fe",
+    }
+    def _city_cell_style(i, col, val):
+        if col == "Parity Label":
+            bg = _PARITY_BADGE_BG.get(val, "")
+            fg = _PARITY_BADGE_FG.get(val, "")
+            if bg:
+                return f"background:{bg};color:{fg};font-weight:600"
+        return ""
+    st.markdown(
+        _products_table_html(disp, "#e8eaed", "#1a1a1a", cell_style_fn=_city_cell_style),
+        unsafe_allow_html=True,
+    )
 
     # [A] Delta View: store che cambiano parity Standard → Prime
     if prime:
@@ -1034,21 +1054,30 @@ def tab_city_parity(sel_weeks, sel_cities, prime: bool = False):
                     "prime_promo":      "Promo Prime",
                     "revenue":          "Revenue",
                 })
-                def _color_delta(val):
-                    if "Migliora" in str(val):
-                        return "background-color:#d9d2e9;color:#9900ff"
-                    if "Peggiora" in str(val):
-                        return "background-color:#fee2e2;color:#991b1b"
+                _DELTA_PARITY_BG = {
+                    "SUPERIORITY": "#00A082", "PARITY": "#F2CC38",
+                    "INFERIORITY": "#ef4444", "UNMATCHED": "#94a3b8",
+                    "EXCLUSIVE_GLOVO": "#8b5cf6",
+                }
+                def _delta_cell_style(i, col, val):
+                    if col == "Direzione":
+                        if "Migliora" in val:
+                            return "background:#d9d2e9;color:#9900ff;font-weight:600"
+                        if "Peggiora" in val:
+                            return "background:#fee2e2;color:#991b1b;font-weight:600"
+                    if col in ("Parity Standard", "Parity Prime"):
+                        bg = _DELTA_PARITY_BG.get(val.strip(), "")
+                        if bg:
+                            return f"background:{bg};color:white;font-weight:600"
                     return ""
-                def _color_parity_cell(v):
-                    c = PARITY_COLORS.get(v, "")
-                    return f"background-color: {c}; color: white" if c else ""
 
-                st.dataframe(
-                    disp_delta.style.map(_color_delta, subset=["Direzione"])
-                              .map(_color_parity_cell, subset=["Parity Standard", "Parity Prime"]),
-                    column_config=_col_config_from_data(disp_delta),
-                    use_container_width=True, hide_index=True,
+                st.markdown(
+                    _products_table_html(
+                        disp_delta, "#e8eaed", "#1a1a1a",
+                        header_brands={"Store Glovo": "glovo"},
+                        cell_style_fn=_delta_cell_style,
+                    ),
+                    unsafe_allow_html=True,
                 )
                 st.caption(f"{len(disp_delta)} store con cambio parity — "
                            f"{(disp_delta['Direzione'].str.contains('Migliora')).sum()} migliorano, "
@@ -1185,21 +1214,38 @@ def _products_table_html(
     header_bg: str,
     header_fg: str,
     row_styles: "list[str] | None" = None,
+    header_brands: "dict[str,str] | None" = None,
+    cell_style_fn=None,
 ) -> str:
     """
-    Tabella HTML per prodotti (Glovo / Deliveroo / Prime).
-    - header_bg / header_fg : colori dell'intestazione
-    - row_styles            : lista CSS per ogni riga (stessa lunghezza di df)
-                              es. "background:#FFF8D0;color:#7a6300"
+    Tabella HTML generica con header brand-colorati e testo centrato.
+
+    Parametri
+    ---------
+    header_bg / header_fg : colore di default per l'header (usato se la colonna
+                            non è in header_brands)
+    row_styles            : lista di CSS string per ogni riga (stile intero row)
+    header_brands         : dict {col_name: "glovo"|"deliveroo"} per override
+                            colore singola colonna di header
+    cell_style_fn         : callable(row_i, col_name, value) -> css str | ""
+                            sovrascrive il row_style per quella singola cella
     """
+    _BRAND_BG = {"glovo": "#FFC244", "deliveroo": "#00CCBC"}
+    _BRAND_FG = {"glovo": "#1a1a1a", "deliveroo": "#ffffff"}
+
     cols = list(df.columns)
     n = len(cols)
     col_w = f"{100 / n:.1f}%"
 
     hdr = ""
     for col in cols:
+        brand = (header_brands or {}).get(col)
+        if brand:
+            bg, fg = _BRAND_BG.get(brand, header_bg), _BRAND_FG.get(brand, header_fg)
+        else:
+            bg, fg = header_bg, header_fg
         hdr += (
-            f'<th style="background:{header_bg};color:{header_fg};text-align:center;'
+            f'<th style="background:{bg};color:{fg};text-align:center;'
             f'padding:8px 4px;font-size:12px;font-weight:600;'
             f'width:{col_w};word-break:break-word;border:1px solid #d1d5db">'
             f'{col}</th>'
@@ -1208,7 +1254,8 @@ def _products_table_html(
     body = ""
     for i, (_, row) in enumerate(df.iterrows()):
         default_bg = "#ffffff" if i % 2 == 0 else "#f9fafb"
-        rs = row_styles[i] if (row_styles and i < len(row_styles) and row_styles[i]) else f"background:{default_bg};color:#1a1a1a"
+        rs = row_styles[i] if (row_styles and i < len(row_styles) and row_styles[i]) \
+             else f"background:{default_bg};color:#1a1a1a"
         cells = ""
         for col in cols:
             val = row.get(col, "")
@@ -1218,8 +1265,11 @@ def _products_table_html(
             except Exception:
                 pass
             val = "" if val is None else str(val)
+            # cell_style_fn può sovrascrivere il row style per singola cella
+            cell_css = cell_style_fn(i, col, val) if cell_style_fn else ""
+            style = cell_css if cell_css else rs
             cells += (
-                f'<td style="{rs};text-align:center;'
+                f'<td style="{style};text-align:center;'
                 f'padding:7px 4px;font-size:12px;border:1px solid #e5e7eb;'
                 f'width:{col_w};word-break:break-word">{val}</td>'
             )
