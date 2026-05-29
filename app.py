@@ -1086,6 +1086,98 @@ def tab_city_parity(sel_weeks, sel_cities, prime: bool = False):
 # TAB 2 — Store Detail
 # ---------------------------------------------------------------------------
 
+# Colonne per brand nella tabella store detail (match sul nome rinominato)
+_SD_GLOVO_COLS = {
+    "Glovo Restaurant", "Glovo Promo Type", "Glovo % OFF",
+    "Glovo Items in Promo", "Glovo Promo Coverage",
+}
+_SD_DELIVEROO_COLS = {
+    "Deliveroo Restaurant", "Deliveroo Promo Type", "Deliveroo % OFF",
+    "Deliveroo Items in Promo", "Deliveroo Promo Detail",
+}
+_SD_PARITY_BG = {
+    "SUPERIORITY":     "#d0f0ea",
+    "PARITY":          "#FFF8D0",
+    "INFERIORITY":     "#fee2e2",
+    "UNMATCHED":       "#f1f5f9",
+    "EXCLUSIVE_GLOVO": "#ede9fe",
+}
+_SD_PARITY_FG = {
+    "SUPERIORITY":     "#00614e",
+    "PARITY":          "#7a6300",
+    "INFERIORITY":     "#991b1b",
+    "UNMATCHED":       "#475569",
+    "EXCLUSIVE_GLOVO": "#5b21b6",
+}
+
+
+def _store_table_html(df: pd.DataFrame) -> str:
+    """
+    Tabella HTML per store detail:
+    - Header Glovo   → sfondo giallo #FFC244
+    - Header Deliveroo → sfondo teal #00CCBC
+    - Cella 'Comparison' → colore parity
+    - Tutto centrato, righe alternate
+    """
+    gy, gfg = "#FFC244", "#1a1a1a"
+    dy, dfg = "#00CCBC", "#ffffff"
+
+    cols = list(df.columns)
+
+    # Header
+    hdr = ""
+    for col in cols:
+        if col in _SD_GLOVO_COLS:
+            bg, fg = gy, gfg
+        elif col in _SD_DELIVEROO_COLS:
+            bg, fg = dy, dfg
+        else:
+            bg, fg = "#e8eaed", "#1a1a1a"
+        hdr += (
+            f'<th style="background:{bg};color:{fg};text-align:center;'
+            f'padding:8px 6px;font-size:12px;font-weight:600;'
+            f'white-space:nowrap;border:1px solid #d1d5db">'
+            f'{col}</th>'
+        )
+
+    # Rows
+    body = ""
+    for i, (_, row) in enumerate(df.iterrows()):
+        bg_row = "#ffffff" if i % 2 == 0 else "#f9fafb"
+        cells = ""
+        for col in cols:
+            val = row.get(col, "")
+            try:
+                if pd.isna(val):
+                    val = ""
+            except Exception:
+                pass
+            val = "" if val is None else str(val)
+
+            if col == "Comparison":
+                cb = _SD_PARITY_BG.get(val.strip(), bg_row)
+                cf = _SD_PARITY_FG.get(val.strip(), "#1a1a1a")
+                cell_style = f"background:{cb};color:{cf};font-weight:600"
+            else:
+                cell_style = f"background:{bg_row};color:#1a1a1a"
+
+            cells += (
+                f'<td style="{cell_style};text-align:center;'
+                f'padding:7px 6px;font-size:12px;border:1px solid #e5e7eb;'
+                f'white-space:nowrap">{val}</td>'
+            )
+        body += f"<tr>{cells}</tr>"
+
+    return (
+        '<div style="overflow-x:auto;margin-top:8px;max-height:520px;'
+        'overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px">'
+        '<table style="width:max-content;min-width:100%;border-collapse:collapse">'
+        f"<thead style='position:sticky;top:0;z-index:1'><tr>{hdr}</tr></thead>"
+        f"<tbody>{body}</tbody>"
+        "</table></div>"
+    )
+
+
 def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
     import base64 as _b64mod
     _icon = ROOT / "assets" / "storePhone.png"
@@ -1279,29 +1371,14 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
         "promo_coverage_pct":      "Glovo Promo Coverage",
     })
 
-    def color_parity(val):
-        if val is None or (isinstance(val, float) and pd.isna(val)):
-            return ""
-        colors = {
-            "SUPERIORITY": "background-color: #d0f0ea; color: #00614e",
-            "PARITY":          "background-color: #FFF8D0; color: #7a6300",
-            "INFERIORITY":     "background-color: #fee2e2; color: #991b1b",
-            "UNMATCHED":       "background-color: #f1f5f9; color: #475569",
-            "EXCLUSIVE_GLOVO": "background-color: #ede9fe; color: #5b21b6",
-        }
-        return colors.get(str(val).strip(), "")
-
-    try:
-        styled = disp.style.map(color_parity, subset=["Comparison"])
-    except Exception:
-        styled = disp.style
-    st.dataframe(
-        styled,
-        column_config=_col_config_from_data(disp),
-        use_container_width=True,
-        hide_index=True,
-        height=500,
-    )
+    _MAX_HTML = 1000
+    disp_html = disp.head(_MAX_HTML)
+    if len(disp) > _MAX_HTML:
+        st.warning(
+            f"Visualizzati i primi {_MAX_HTML} store su {len(disp)}. "
+            "Usa i filtri per restringere la selezione."
+        )
+    st.markdown(_store_table_html(disp_html), unsafe_allow_html=True)
     st.caption(f"Totale store visualizzati: {len(disp)}")
 
     # ---- Drill-down su singolo store ----
