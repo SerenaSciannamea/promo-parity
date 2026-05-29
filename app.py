@@ -1123,6 +1123,8 @@ def _store_table_html(df: pd.DataFrame) -> str:
     dy, dfg = "#00CCBC", "#ffffff"
 
     cols = list(df.columns)
+    n = len(cols)
+    col_w = f"{100 / n:.1f}%"
 
     # Header
     hdr = ""
@@ -1135,8 +1137,8 @@ def _store_table_html(df: pd.DataFrame) -> str:
             bg, fg = "#e8eaed", "#1a1a1a"
         hdr += (
             f'<th style="background:{bg};color:{fg};text-align:center;'
-            f'padding:8px 6px;font-size:12px;font-weight:600;'
-            f'white-space:nowrap;border:1px solid #d1d5db">'
+            f'padding:8px 4px;font-size:12px;font-weight:600;'
+            f'width:{col_w};white-space:nowrap;border:1px solid #d1d5db">'
             f'{col}</th>'
         )
 
@@ -1163,15 +1165,15 @@ def _store_table_html(df: pd.DataFrame) -> str:
 
             cells += (
                 f'<td style="{cell_style};text-align:center;'
-                f'padding:7px 6px;font-size:12px;border:1px solid #e5e7eb;'
-                f'white-space:nowrap">{val}</td>'
+                f'padding:7px 4px;font-size:12px;border:1px solid #e5e7eb;'
+                f'width:{col_w};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{val}</td>'
             )
         body += f"<tr>{cells}</tr>"
 
     return (
         '<div style="overflow-x:auto;margin-top:8px;max-height:520px;'
         'overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px">'
-        '<table style="width:max-content;min-width:100%;border-collapse:collapse">'
+        '<table style="width:100%;table-layout:fixed;border-collapse:collapse">'
         f"<thead style='position:sticky;top:0;z-index:1'><tr>{hdr}</tr></thead>"
         f"<tbody>{body}</tbody>"
         "</table></div>"
