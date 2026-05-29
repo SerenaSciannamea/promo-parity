@@ -34,6 +34,7 @@ TAB_GLOVO_PRODUCTS     = "glovo_products"
 TAB_DELIVEROO_PRODUCTS = "deliveroo_products"
 TAB_STORE_PARITY_PRIME = "store_parity_prime"
 TAB_CITY_PARITY_PRIME  = "city_parity_prime"
+TAB_GLOVO_PRODUCTS_PRIME = "glovo_products_prime"
 TAB_PRIORITY_ACTIONS   = "priority_actions"
 TAB_PIPELINE_HEALTH    = "pipeline_health"
 
@@ -185,12 +186,13 @@ def read_all(
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    glovo_products     = _read_tab(sheet, TAB_GLOVO_PRODUCTS)
-    deliveroo_products = _read_tab(sheet, TAB_DELIVEROO_PRODUCTS)
-    store_parity_prime = _read_tab(sheet, TAB_STORE_PARITY_PRIME)
-    city_parity_prime  = _read_tab(sheet, TAB_CITY_PARITY_PRIME)
-    priority_actions   = _read_tab(sheet, TAB_PRIORITY_ACTIONS)
-    pipeline_health    = _read_tab(sheet, TAB_PIPELINE_HEALTH)
+    glovo_products       = _read_tab(sheet, TAB_GLOVO_PRODUCTS)
+    deliveroo_products   = _read_tab(sheet, TAB_DELIVEROO_PRODUCTS)
+    store_parity_prime   = _read_tab(sheet, TAB_STORE_PARITY_PRIME)
+    city_parity_prime    = _read_tab(sheet, TAB_CITY_PARITY_PRIME)
+    glovo_products_prime = _read_tab(sheet, TAB_GLOVO_PRODUCTS_PRIME)
+    priority_actions     = _read_tab(sheet, TAB_PRIORITY_ACTIONS)
+    pipeline_health      = _read_tab(sheet, TAB_PIPELINE_HEALTH)
 
     # Cast numerici prodotti Glovo
     for col in ["avg_percentage_off", "avg_unit_price", "total_product_sold"]:
@@ -227,8 +229,9 @@ def read_all(
         TAB_DELIVEROO_PRODUCTS: deliveroo_products,
         TAB_STORE_PARITY_PRIME: store_parity_prime,
         TAB_CITY_PARITY_PRIME:  city_parity_prime,
-        TAB_PRIORITY_ACTIONS:   priority_actions,
-        TAB_PIPELINE_HEALTH:    pipeline_health,
+        TAB_GLOVO_PRODUCTS_PRIME: glovo_products_prime,
+        TAB_PRIORITY_ACTIONS:     priority_actions,
+        TAB_PIPELINE_HEALTH:      pipeline_health,
     }
 
 

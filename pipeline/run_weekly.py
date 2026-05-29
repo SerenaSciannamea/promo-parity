@@ -521,18 +521,19 @@ def run_pipeline(
             _health_df   = quality_report.to_dataframe()   if quality_report is not None else None
 
             sheets_result = export_to_sheets(
-                spreadsheet_id       = sheets_id,
-                service_account_info = sheets_sa,
-                store_parity         = store_parity,
-                city_parity          = city_parity,
-                store_mapping        = mapping_df            if len(mapping_df) > 0            else None,
-                needs_review         = review_df             if len(review_df)  > 0            else None,
-                glovo_products       = glovo_products        if len(glovo_products) > 0        else None,
-                deliveroo_products   = deliveroo_products,
-                store_parity_prime   = store_parity_prime    if len(store_parity_prime) > 0    else None,
-                city_parity_prime    = city_parity_prime     if len(city_parity_prime)  > 0    else None,
-                priority_actions     = _priority_df          if _priority_df is not None and len(_priority_df) > 0 else None,
-                pipeline_health      = _health_df            if _health_df   is not None and len(_health_df)   > 0 else None,
+                spreadsheet_id        = sheets_id,
+                service_account_info  = sheets_sa,
+                store_parity          = store_parity,
+                city_parity           = city_parity,
+                store_mapping         = mapping_df             if len(mapping_df) > 0              else None,
+                needs_review          = review_df              if len(review_df)  > 0              else None,
+                glovo_products        = glovo_products         if len(glovo_products) > 0          else None,
+                deliveroo_products    = deliveroo_products,
+                store_parity_prime    = store_parity_prime     if len(store_parity_prime) > 0      else None,
+                city_parity_prime     = city_parity_prime      if len(city_parity_prime)  > 0      else None,
+                glovo_products_prime  = glovo_products_prime   if not glovo_products_prime.empty   else None,
+                priority_actions      = _priority_df           if _priority_df is not None and len(_priority_df) > 0 else None,
+                pipeline_health       = _health_df             if _health_df   is not None and len(_health_df)   > 0 else None,
             )
             print(f"[GSheets] Export completato")
 

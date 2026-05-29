@@ -378,6 +378,10 @@ def _cloud_deliveroo_names() -> dict[str, list[str]]:
     return result
 
 
+def _cloud_glovo_products_prime() -> pd.DataFrame:
+    return _cloud_load_all().get("glovo_products_prime", pd.DataFrame())
+
+
 def _cloud_priority_actions() -> pd.DataFrame:
     return _cloud_load_all().get("priority_actions", pd.DataFrame())
 
@@ -450,6 +454,19 @@ def load_pipeline_health() -> pd.DataFrame:
 
 def load_glovo_products_prime(city_code: str, store_name: str, week_num: str) -> pd.DataFrame:
     """Prodotti Glovo prime per uno store specifico. Non cachato (filtra live)."""
+    if _is_cloud_mode():
+        df = _cloud_glovo_products_prime()
+        if df.empty:
+            return pd.DataFrame()
+        mask = (df["city_code"] == city_code) & (df["store_name"] == store_name)
+        if week_num:
+            mask = mask & (df["week_num"] == week_num)
+        cols = ["product_name",
+                "type_of_promo_np", "has_active_promo_np", "avg_percentage_off_np",
+                "type_of_promo_p",  "has_active_promo_p",  "avg_percentage_off_p",
+                "avg_unit_price", "total_product_sold"]
+        cols_present = [c for c in cols if c in df.columns]
+        return df[mask][cols_present].reset_index(drop=True)
     return _local_glovo_products_prime(city_code, store_name, week_num)
 
 

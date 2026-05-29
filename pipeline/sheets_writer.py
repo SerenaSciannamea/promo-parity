@@ -48,6 +48,7 @@ TAB_GLOVO_PRODUCTS     = "glovo_products"
 TAB_DELIVEROO_PRODUCTS = "deliveroo_products"
 TAB_STORE_PARITY_PRIME = "store_parity_prime"
 TAB_CITY_PARITY_PRIME  = "city_parity_prime"
+TAB_GLOVO_PRODUCTS_PRIME = "glovo_products_prime"
 TAB_PRIORITY_ACTIONS   = "priority_actions"
 TAB_PIPELINE_HEALTH    = "pipeline_health"
 
@@ -188,16 +189,17 @@ def _upsert_sheet(
 def export_to_sheets(
     spreadsheet_id: str,
     service_account_info: dict | str | Path,
-    store_parity:       pd.DataFrame | None = None,
-    city_parity:        pd.DataFrame | None = None,
-    store_mapping:      pd.DataFrame | None = None,
-    needs_review:       pd.DataFrame | None = None,
-    glovo_products:     pd.DataFrame | None = None,
-    deliveroo_products: pd.DataFrame | None = None,
-    store_parity_prime: pd.DataFrame | None = None,
-    city_parity_prime:  pd.DataFrame | None = None,
-    priority_actions:   pd.DataFrame | None = None,
-    pipeline_health:    pd.DataFrame | None = None,
+    store_parity:         pd.DataFrame | None = None,
+    city_parity:          pd.DataFrame | None = None,
+    store_mapping:        pd.DataFrame | None = None,
+    needs_review:         pd.DataFrame | None = None,
+    glovo_products:       pd.DataFrame | None = None,
+    deliveroo_products:   pd.DataFrame | None = None,
+    store_parity_prime:   pd.DataFrame | None = None,
+    city_parity_prime:    pd.DataFrame | None = None,
+    glovo_products_prime: pd.DataFrame | None = None,
+    priority_actions:     pd.DataFrame | None = None,
+    pipeline_health:      pd.DataFrame | None = None,
 ) -> dict[str, int]:
     """
     Esporta i DataFrame su Google Sheets.
@@ -256,6 +258,10 @@ def export_to_sheets(
 
     _write(TAB_CITY_PARITY_PRIME, city_parity_prime,
            key_cols=["city_code", "week_num"])
+
+    _write(TAB_GLOVO_PRODUCTS_PRIME, glovo_products_prime,
+           key_cols=["city_code", "store_name", "week_num", "product_name"],
+           partition_cols=["week_num"])
 
     _write(TAB_PRIORITY_ACTIONS, priority_actions,
            key_cols=["city_code", "glovo_name", "week_num"],
