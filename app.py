@@ -1138,7 +1138,7 @@ def _store_table_html(df: pd.DataFrame) -> str:
         hdr += (
             f'<th style="background:{bg};color:{fg};text-align:center;'
             f'padding:8px 4px;font-size:12px;font-weight:600;'
-            f'width:{col_w};white-space:nowrap;border:1px solid #d1d5db">'
+            f'width:{col_w};word-break:break-word;border:1px solid #d1d5db">'
             f'{col}</th>'
         )
 
