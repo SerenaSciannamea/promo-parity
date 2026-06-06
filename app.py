@@ -354,8 +354,32 @@ def _cloud_unmatched() -> pd.DataFrame:
 def _cloud_glovo_products() -> pd.DataFrame:
     return _cloud_load_all().get("glovo_products", pd.DataFrame())
 
+@st.cache_data(ttl=3600)
 def _cloud_am_mapping() -> pd.DataFrame:
-    return _cloud_load_all().get("am_mapping", pd.DataFrame())
+    """Legge il tab Mapping direttamente dal foglio sorgente Glovo."""
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        _GLOVO_SOURCE_ID = "1ah5GsEJaSnv-S8jYytar3Vn9tU8MD8IITfNAWtmtveE"
+        sa_info = _get_service_account()
+        creds   = Credentials.from_service_account_info(
+            sa_info,
+            scopes=["https://spreadsheets.google.com/feeds",
+                    "https://www.googleapis.com/auth/drive"]
+        )
+        client  = gspread.authorize(creds)
+        sh      = client.open_by_key(_GLOVO_SOURCE_ID)
+        ws      = sh.worksheet("Mapping")
+        data    = ws.get_all_records(default_blank="")
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+        cols = ["city_code", "store_name", "sf_registered_am"]
+        df = df[[c for c in cols if c in df.columns]].drop_duplicates()
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
 def _cloud_deliveroo_products() -> pd.DataFrame:

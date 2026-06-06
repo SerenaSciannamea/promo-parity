@@ -37,6 +37,7 @@ TAB_CITY_PARITY_PRIME  = "city_parity_prime"
 TAB_GLOVO_PRODUCTS_PRIME = "glovo_products_prime"
 TAB_PRIORITY_ACTIONS   = "priority_actions"
 TAB_PIPELINE_HEALTH    = "pipeline_health"
+TAB_AM_MAPPING         = "am_mapping"
 
 MANUAL_COLS = [
     "city_code", "glovo_name", "glovo_store_id",
@@ -193,6 +194,7 @@ def read_all(
     glovo_products_prime = _read_tab(sheet, TAB_GLOVO_PRODUCTS_PRIME)
     priority_actions     = _read_tab(sheet, TAB_PRIORITY_ACTIONS)
     pipeline_health      = _read_tab(sheet, TAB_PIPELINE_HEALTH)
+    am_mapping           = _read_tab(sheet, TAB_AM_MAPPING)
 
     # Cast numerici prodotti Glovo
     for col in ["avg_percentage_off", "avg_unit_price", "total_product_sold"]:
@@ -232,6 +234,7 @@ def read_all(
         TAB_GLOVO_PRODUCTS_PRIME: glovo_products_prime,
         TAB_PRIORITY_ACTIONS:     priority_actions,
         TAB_PIPELINE_HEALTH:      pipeline_health,
+        TAB_AM_MAPPING:           am_mapping,
     }
 
 
