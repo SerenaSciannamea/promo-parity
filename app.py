@@ -1057,9 +1057,9 @@ def tab_city_parity(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
             st.info(f"👤 Filtro AM attivo: **{sel_am}**")
 
     df = city_df.copy()
-    if sel_weeks:
+    if sel_weeks and "week_num" in df.columns:
         df = df[df["week_num"].isin(sel_weeks)]
-    if sel_cities:
+    if sel_cities and "city_code" in df.columns:
         df = df[df["city_code"].isin(sel_cities)]
 
     if df.empty:
@@ -2058,10 +2058,10 @@ def tab_trend(sel_weeks, sel_cities, sel_am=None):
         return
 
     df = city_df.copy()
-    if sel_cities:
+    if sel_cities and "city_code" in df.columns:
         df = df[df["city_code"].isin(sel_cities)]
 
-    if df.empty:
+    if df.empty or "week_num" not in df.columns:
         st.warning("Nessun dato per le città selezionate.")
         return
 
