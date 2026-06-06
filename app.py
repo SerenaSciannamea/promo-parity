@@ -2771,6 +2771,7 @@ def main():
     _b64_trend    = _icon_b64("growth.png")
     _b64_matching = _icon_b64("twoBagsYellowCheck.png")
     _b64_prime    = _icon_b64("isotypeCoinsLoyalty.png")
+    _b64_azioni   = _icon_b64("redFlag.png")
 
     _css_tabs = """<style>
     /* ── Montserrat font ── */
@@ -2838,6 +2839,14 @@ def main():
             background-size:contain; background-repeat:no-repeat;
             vertical-align:middle; margin-right:5px;
         }}"""
+    if _b64_azioni:
+        _css_tabs += f"""
+        div[data-testid="stTabs"] button[role="tab"]:nth-child(6)::before {{
+            content:''; display:inline-block; width:18px; height:18px;
+            background-image:url('data:image/png;base64,{_b64_azioni}');
+            background-size:contain; background-repeat:no-repeat;
+            vertical-align:middle; margin-right:5px;
+        }}"""
     _css_tabs += "</style>"
     st.markdown(_css_tabs, unsafe_allow_html=True)
 
@@ -2847,7 +2856,7 @@ def main():
         "Trend",
         "Store Matching",
         "Prime",
-        "🎯 Azioni",
+        "Azioni",
     ])
 
     with tab1:
