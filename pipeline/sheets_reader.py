@@ -151,14 +151,27 @@ def read_all(
                  "deliveroo_name", "confidence", "source"]]
 
         if not store_mapping.empty and "city_code" in store_mapping.columns:
-            # Rimuovi righe che verranno sovrascritte
+            # Rimuovi righe che verranno sovrascritte, MA preserva le Exclusive Glovo
+            # (source=manual_rejected): un rifiuto fuzzy via UI non deve cancellare
+            # un'esclusiva marcata in bulk.
             key_set = set(zip(mm["city_code"], mm["glovo_name"]))
+            exclusive_keys = set(
+                zip(
+                    store_mapping.loc[store_mapping["source"] == "manual_rejected", "city_code"],
+                    store_mapping.loc[store_mapping["source"] == "manual_rejected", "glovo_name"],
+                )
+            )
             mask = [
                 (r["city_code"], r["glovo_name"]) not in key_set
+                or r.get("source", "") == "manual_rejected"
                 for _, r in store_mapping.iterrows()
             ]
             store_mapping = store_mapping[mask]
-            store_mapping = pd.concat([store_mapping, mm], ignore_index=True)
+            # Aggiungi solo le righe di manual_matches che NON sono già Exclusive Glovo
+            mm_filtered = mm[~mm.apply(
+                lambda r: (r["city_code"], r["glovo_name"]) in exclusive_keys, axis=1
+            )]
+            store_mapping = pd.concat([store_mapping, mm_filtered], ignore_index=True)
         else:
             store_mapping = mm
 
