@@ -165,11 +165,16 @@ def _get_or_create_worksheet(
 # Upsert con allineamento colonne garantito
 # ---------------------------------------------------------------------------
 
+MAX_WEEKS_ON_SHEETS = 6   # settimane massime conservate su Sheets per tab con week_num
+                           # I dati storici completi rimangono nel DB SQLite locale.
+
+
 def _upsert_sheet(
     ws: "gspread.Worksheet",
     df: pd.DataFrame,
     key_cols: list[str],
     partition_cols: list[str] | None = None,
+    max_weeks: int = MAX_WEEKS_ON_SHEETS,
 ) -> int:
     """
     Legge le righe esistenti, fa upsert/partition, e riscrive il foglio.
@@ -182,6 +187,9 @@ def _upsert_sheet(
 
     partition_cols: se specificato, le righe esistenti delle stesse partizioni
                     vengono rimosse prima di inserire i nuovi dati.
+    max_weeks:      se partition_cols include 'week_num', mantiene solo le ultime
+                    N settimane per evitare di raggiungere il limite di celle di Sheets.
+                    I dati storici completi restano nel DB SQLite locale.
     """
     existing_data = ws.get_all_records(default_blank="")
     if existing_data:
@@ -209,6 +217,19 @@ def _upsert_sheet(
 
     # pd.concat garantisce unione delle colonne → nessuno sfasamento possibile
     combined = pd.concat([existing_df, df_str], ignore_index=True)
+
+    # Pruning settimane vecchie — mantieni solo le ultime max_weeks
+    if (max_weeks and max_weeks > 0
+            and partition_cols and "week_num" in partition_cols
+            and "week_num" in combined.columns):
+        all_weeks  = sorted(combined["week_num"].unique())
+        keep_weeks = set(all_weeks[-max_weeks:])
+        n_before   = len(combined)
+        combined   = combined[combined["week_num"].isin(keep_weeks)]
+        n_pruned   = n_before - len(combined)
+        if n_pruned > 0:
+            print(f"    [sheets_writer] Pruned {n_pruned} righe ({all_weeks[:-max_weeks]} rimosse da Sheets — dati storici nel DB locale)")
+
     headers  = combined.columns.tolist()
     rows     = combined.fillna("").astype(str).values.tolist()
 
