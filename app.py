@@ -866,6 +866,44 @@ def sidebar() -> tuple[list[str], list[str]]:
 # TAB 1 — City Parity Overview
 # ---------------------------------------------------------------------------
 
+def _recompute_city_from_stores(store_df: pd.DataFrame) -> pd.DataFrame:
+    """Ricalcola city_parity da uno store_parity filtrato (es. per AM).
+    Usato quando il filtro AM è attivo per avere metriche city-level corrette."""
+    rows = []
+    for (city, week), g in store_df.groupby(["city_code", "week_num"]):
+        matched = g[~g["parity"].isin(["UNMATCHED", "EXCLUSIVE_GLOVO"])]
+        n_total   = len(g)
+        n_matched = len(matched)
+        if n_matched == 0:
+            continue
+        n_sup = int((matched["parity"] == "SUPERIORITY").sum())
+        n_par = int((matched["parity"] == "PARITY").sum())
+        n_inf = int((matched["parity"] == "INFERIORITY").sum())
+        pct_sup = round(n_sup / n_matched * 100, 1)
+        pct_par = round(n_par / n_matched * 100, 1)
+        pct_inf = round(n_inf / n_matched * 100, 1)
+        rev = pd.to_numeric(matched["revenue"], errors="coerce").fillna(0)
+        total_rev = rev.sum()
+        if total_rev > 0:
+            w_sup = round(rev[matched["parity"] == "SUPERIORITY"].sum() / total_rev * 100, 1)
+            w_par = round(rev[matched["parity"] == "PARITY"].sum()      / total_rev * 100, 1)
+            w_inf = round(rev[matched["parity"] == "INFERIORITY"].sum() / total_rev * 100, 1)
+        else:
+            w_sup, w_par, w_inf = pct_sup, pct_par, pct_inf
+        best_w = max(w_sup, w_par, w_inf)
+        label  = "SUPERIORITY" if best_w == w_sup else ("PARITY" if best_w == w_par else "INFERIORITY")
+        rows.append({
+            "city_code": city, "week_num": week,
+            "n_stores_total": n_total, "n_stores_matched": n_matched,
+            "n_superiority": n_sup, "n_parity": n_par, "n_inferiority": n_inf,
+            "pct_superiority": pct_sup, "pct_parity": pct_par, "pct_inferiority": pct_inf,
+            "w_superiority": w_sup, "w_parity": w_par, "w_inferiority": w_inf,
+            "city_parity_label": label,
+            "match_coverage_pct": round(n_matched / n_total * 100, 1) if n_total > 0 else 0.0,
+        })
+    return pd.DataFrame(rows)
+
+
 def _am_filtered_stores(sel_am: str | None) -> set[tuple[str, str]] | None:
     """Ritorna il set (city_code, store_name) assegnati all'AM, o None se nessun filtro."""
     if not sel_am:
@@ -1004,6 +1042,19 @@ def tab_city_parity(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
     if city_df.empty:
         st.info("Nessun dato disponibile. Esegui la pipeline settimanale.")
         return
+
+    # Se filtro AM attivo: ricalcola city_parity dagli store filtrati per AM
+    _am_stores = _am_filtered_stores(sel_am)
+    if _am_stores is not None:
+        _sp = load_store_parity_prime() if prime else load_store_parity()
+        if not _sp.empty:
+            _sp_am = _sp[_sp.apply(
+                lambda r: (str(r.get("city_code","")).strip(), str(r.get("glovo_name","")).strip())
+                          in _am_stores, axis=1
+            )]
+            city_df = _recompute_city_from_stores(_sp_am)
+        if sel_am:
+            st.info(f"👤 Filtro AM attivo: **{sel_am}**")
 
     df = city_df.copy()
     if sel_weeks:
@@ -1969,7 +2020,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
 # TAB 3 — Trend
 # ---------------------------------------------------------------------------
 
-def tab_trend(sel_weeks, sel_cities):
+def tab_trend(sel_weeks, sel_cities, sel_am=None):
     import base64 as _b64mod
     _icon = ROOT / "assets" / "growth.png"
     if _icon.exists():
@@ -1985,7 +2036,23 @@ def tab_trend(sel_weeks, sel_cities):
         st.header("📈 Trend Settimanale")
     st.caption("Evoluzione della parity nel tempo (tutte le settimane disponibili)")
 
-    city_df = load_city_parity()
+    # Se filtro AM attivo: ricalcola city_parity dagli store di quell'AM
+    _am_stores_t = _am_filtered_stores(sel_am)
+    if _am_stores_t is not None:
+        _sp_t = load_store_parity()
+        if not _sp_t.empty:
+            _sp_t_am = _sp_t[_sp_t.apply(
+                lambda r: (str(r.get("city_code","")).strip(), str(r.get("glovo_name","")).strip())
+                          in _am_stores_t, axis=1
+            )]
+            city_df = _recompute_city_from_stores(_sp_t_am)
+        else:
+            city_df = pd.DataFrame()
+        if sel_am:
+            st.info(f"👤 Filtro AM attivo: **{sel_am}**")
+    else:
+        city_df = load_city_parity()
+
     if city_df.empty:
         st.info("Nessun dato disponibile.")
         return
@@ -2516,7 +2583,7 @@ def _priority_table_html(df: pd.DataFrame) -> str:
     )
 
 
-def tab_pipeline(sel_weeks: list[str], sel_cities: list[str]) -> None:
+def tab_pipeline(sel_weeks: list[str], sel_cities: list[str], sel_am=None) -> None:
     st.header("🎯 Azioni Prioritarie")
     st.caption(
         "Store in **INFERIORITY** ordinati per revenue decrescente — "
@@ -2534,6 +2601,16 @@ def tab_pipeline(sel_weeks: list[str], sel_cities: list[str]) -> None:
             df = df[df["week_num"].isin(sel_weeks)]
         if sel_cities and "city_code" in df.columns:
             df = df[df["city_code"].isin(sel_cities)]
+
+        # Filtro AM — mantieni solo store dell'AM selezionato
+        _am_stores_p = _am_filtered_stores(sel_am)
+        if _am_stores_p is not None and "glovo_name" in df.columns:
+            df = df[df.apply(
+                lambda r: (str(r.get("city_code","")).strip(), str(r.get("glovo_name","")).strip())
+                          in _am_stores_p, axis=1
+            )]
+            if sel_am:
+                st.info(f"👤 Filtro AM attivo: **{sel_am}**")
 
         # KPI in cima
         n_stores = len(df)
@@ -2731,7 +2808,7 @@ def main():
     with tab2:
         tab_store_detail(sel_weeks, sel_cities, sel_am=sel_am)
     with tab3:
-        tab_trend(sel_weeks, sel_cities)
+        tab_trend(sel_weeks, sel_cities, sel_am=sel_am)
     with tab4:
         tab_store_matching()
     with tab5:
@@ -2739,7 +2816,7 @@ def main():
         st.divider()
         tab_store_detail(sel_weeks, sel_cities, prime=True, sel_am=sel_am)
     with tab6:
-        tab_pipeline(sel_weeks, sel_cities)
+        tab_pipeline(sel_weeks, sel_cities, sel_am=sel_am)
 
 
 if __name__ == "__main__":
