@@ -269,16 +269,18 @@ def export_to_sheets(
     result: dict[str, int] = {}
     errors: dict[str, str] = {}
 
-    def _write(tab_name, df, key_cols, partition_cols=None, col_filter=None):
+    def _write(tab_name, df, key_cols, partition_cols=None, col_filter=None, max_weeks=None):
         """Helper interno: filtra colonne opzionalmente, poi upsert."""
         if df is None or len(df) == 0:
             return
         if col_filter:
             present = [c for c in col_filter if c in df.columns]
             df = df[present]
+        _mw = max_weeks if max_weeks is not None else MAX_WEEKS_ON_SHEETS
         try:
             ws = _get_or_create_worksheet(sheet, tab_name, df.columns.tolist())
-            n  = _upsert_sheet(ws, df, key_cols=key_cols, partition_cols=partition_cols)
+            n  = _upsert_sheet(ws, df, key_cols=key_cols, partition_cols=partition_cols,
+                               max_weeks=_mw)
             result[tab_name] = n
             print(f"[sheets_writer] {tab_name}: {n} righe ✓")
         except Exception as exc:
@@ -300,7 +302,7 @@ def export_to_sheets(
 
     _write(TAB_GLOVO_PRODUCTS, glovo_products,
            key_cols=["city_code", "store_name", "week_num", "product_name"],
-           partition_cols=["week_num"])
+           partition_cols=["week_num"], max_weeks=2)  # max 2 settimane: ~140k righe < limite API
 
     _write(TAB_DELIVEROO_PRODUCTS, deliveroo_products,
            key_cols=["city_code", "restaurant_name", "week_num", "product_name"],
@@ -316,7 +318,7 @@ def export_to_sheets(
 
     _write(TAB_GLOVO_PRODUCTS_PRIME, glovo_products_prime,
            key_cols=["city_code", "store_name", "week_num", "product_name"],
-           partition_cols=["week_num"])
+           partition_cols=["week_num"], max_weeks=2)  # max 2 settimane
 
     _write(TAB_PRIORITY_ACTIONS, priority_actions,
            key_cols=["city_code", "glovo_name", "week_num"],
