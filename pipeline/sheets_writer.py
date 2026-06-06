@@ -302,7 +302,7 @@ def export_to_sheets(
 
     _write(TAB_GLOVO_PRODUCTS, glovo_products,
            key_cols=["city_code", "store_name", "week_num", "product_name"],
-           partition_cols=["week_num"], max_weeks=2)  # max 2 settimane: ~140k righe < limite API
+           partition_cols=["week_num"], max_weeks=1)  # solo settimana corrente: drill-down non richiede storico
 
     _write(TAB_DELIVEROO_PRODUCTS, deliveroo_products,
            key_cols=["city_code", "restaurant_name", "week_num", "product_name"],
@@ -318,7 +318,7 @@ def export_to_sheets(
 
     _write(TAB_GLOVO_PRODUCTS_PRIME, glovo_products_prime,
            key_cols=["city_code", "store_name", "week_num", "product_name"],
-           partition_cols=["week_num"], max_weeks=2)  # max 2 settimane
+           partition_cols=["week_num"], max_weeks=1)  # solo settimana corrente
 
     _write(TAB_PRIORITY_ACTIONS, priority_actions,
            key_cols=["city_code", "glovo_name", "week_num"],
