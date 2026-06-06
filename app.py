@@ -711,6 +711,36 @@ def load_deliveroo_products(city_code: str, restaurant_name: str, week_num: str 
 # Scrittura mapping (funziona in entrambe le modalita')
 # ---------------------------------------------------------------------------
 
+def _sync_mapping_to_sheets() -> None:
+    """Sovrascrive il tab store_mapping su Sheets con il CSV locale aggiornato."""
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    scopes = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds  = Credentials.from_service_account_info(_get_service_account(), scopes=scopes)
+    gc     = gspread.authorize(creds)
+    sheet  = gc.open_by_key(_get_sheet_id())
+
+    df = pd.read_csv(ROOT / "data" / "store_mapping.csv", dtype=str).fillna("")
+    headers = df.columns.tolist()
+    rows    = df.values.tolist()
+
+    try:
+        ws = sheet.worksheet("store_mapping")
+    except gspread.WorksheetNotFound:
+        ws = sheet.add_worksheet(title="store_mapping", rows=1, cols=len(headers))
+
+    ws.clear()
+    chunk = 5000
+    all_data = [headers] + rows
+    for i in range(0, len(all_data), chunk):
+        ws.append_rows(all_data[i:i + chunk], value_input_option="RAW")
+        if i + chunk < len(all_data):
+            import time; time.sleep(1.0)
+
 def save_confirmed_match(city: str, glovo_name: str, deliveroo_name: str) -> None:
     from pipeline.store_matcher import confirm_match, reject_match
     if _is_cloud_mode():
@@ -2318,6 +2348,11 @@ def tab_store_matching():
         else:
             st.error(f"❌ Errore: {msg}")
 
+    # Pulsante refresh manuale — utile dopo sync bulk
+    if st.button("🔄 Aggiorna dati", key="refresh_matching"):
+        clear_cache()
+        st.rerun()
+
     store_df    = load_store_parity()
     mapping_df  = load_store_mapping()
     deliv_names = load_deliveroo_names_by_city()
@@ -2584,7 +2619,19 @@ def _priority_table_html(df: pd.DataFrame) -> str:
 
 
 def tab_pipeline(sel_weeks: list[str], sel_cities: list[str], sel_am=None) -> None:
-    st.header("🎯 Azioni Prioritarie")
+    import base64 as _b64mod
+    _icon = ROOT / "assets" / "redFlag.png"
+    if _icon.exists():
+        _b64 = _b64mod.b64encode(_icon.read_bytes()).decode()
+        st.markdown(
+            f"""<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>
+                  <img src='data:image/png;base64,{_b64}' style='width:42px;height:42px;object-fit:contain'>
+                  <h2 style='margin:0;padding:0'>Azioni Prioritarie</h2>
+                </div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.header("🎯 Azioni Prioritarie")
     st.caption(
         "Store in **INFERIORITY** ordinati per revenue decrescente — "
         "quelli con impatto economico più alto da allineare subito."
