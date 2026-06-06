@@ -14,6 +14,7 @@ Check implementati:
   3. Distribuzione parity — shift anomali in SUPERIORITY/INFERIORITY
   4. Store ad alto rischio — INFERIORITY con revenue elevato (priority actions)
   5. Settimana dati   — i CSV sono della settimana corrente?
+  6. Integrità Sheets — il tab glovo_products su Sheets è completo?
 """
 
 from __future__ import annotations
@@ -297,6 +298,57 @@ def compute_priority_actions(
     result["priority"]  = range(1, len(result) + 1)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Check 6 — Integrità tab glovo_products su Google Sheets
+# ---------------------------------------------------------------------------
+
+def check_sheets_products_integrity(
+    sheets_result: dict,
+    expected_rows: int,
+    report: QualityReport,
+) -> None:
+    """
+    Verifica che il tab glovo_products su Sheets sia stato scritto correttamente.
+
+    sheets_result : dict restituito da export_to_sheets { tab_name: rows_written }
+                    -1 = errore di scrittura, >=0 = righe totali nel tab dopo l'upsert
+    expected_rows : righe promo-attive della settimana corrente (lower bound di sanity)
+    """
+    written = sheets_result.get("glovo_products", None)
+
+    if written is None:
+        # Export non eseguito (modalità locale senza --sheets-id) — check non applicabile
+        return
+
+    if written == -1:
+        report.add(
+            "ERROR", "sheets_integrity",
+            f"Tab 'glovo_products' non scritto su Sheets (errore API). "
+            f"I dettagli prodotto nell'app saranno vuoti o incompleti. "
+            f"Eseguire: python -m pipeline.sheets_repair --tab glovo_products "
+            f"--weeks {report.week_num}"
+        )
+        return
+
+    # Il tab usa upsert cumulativo (vecchie settimane + nuova), quindi written >= expected_rows.
+    # Controlliamo che almeno le righe della settimana corrente siano presenti.
+    if written < expected_rows:
+        report.add(
+            "WARNING", "sheets_integrity",
+            f"Tab 'glovo_products' su Sheets ha {written} righe totali, "
+            f"ma attese almeno {expected_rows} (solo {report.week_num}). "
+            f"I dettagli prodotto potrebbero essere incompleti nell'app. "
+            f"Eseguire: python -m pipeline.sheets_repair --tab glovo_products "
+            f"--weeks {report.week_num}"
+        )
+    else:
+        report.add(
+            "INFO", "sheets_integrity",
+            f"Tab 'glovo_products' su Sheets: {written} righe "
+            f"(di cui ~{expected_rows} promo-attive {report.week_num}) ✓"
+        )
 
 
 # ---------------------------------------------------------------------------

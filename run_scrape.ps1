@@ -180,10 +180,12 @@ $null = $paramList.Add("--polygons")
 $null = $paramList.Add($polygons)
 $null = $paramList.Add("--sample-step-km")
 $null = $paramList.Add("4.5")
+$null = $paramList.Add("--load-more-clicks")
+$null = $paramList.Add("1")
 $null = $paramList.Add("--max-points-per-city")
 $null = $paramList.Add("$MaxPointsPerCity")
 $null = $paramList.Add("--skip-city-after-same-results")
-$null = $paramList.Add("$SkipCityAfterSameResults")
+$null = $paramList.Add("5")
 
 if ($Cities -ne "") {
     $null = $paramList.Add("--city-codes")
@@ -223,18 +225,21 @@ $currentWeek = Get-ISOWeek
 Write-Log "Avvio scraper Deliveroo per settimana $currentWeek..."
 Send-Notify -Subject "Scraper Deliveroo avviato $currentWeek" -Body "Lo scraper Deliveroo e' partito per la settimana $currentWeek. Potrai seguire l'avanzamento nella finestra PowerShell aperta sul PC."
 
-$maxRetries = 20
-$attempt    = 0
-$scrapeExit = 1
+$maxRetries       = 20
+$attempt          = 0
+$scrapeExit       = 1
+$watchdogMinutes  = 30   # kill se nessun progresso nel file di output per N minuti
 
 while ($scrapeExit -ne 0 -and $scrapeExit -ne 2 -and $attempt -lt $maxRetries) {
     if ($attempt -gt 0) {
-        Write-Log "Auto-restart #$attempt - attendo 5 secondi e riprendo dal punto di interruzione..."
-        Start-Sleep -Seconds 5
-        Get-Process chrome, chromedriver -ErrorAction SilentlyContinue | Stop-Process -Force
+        Write-Log "Auto-restart #$attempt - attendo 30 secondi e riprendo dal punto di interruzione..."
+        Start-Sleep -Seconds 30
+        Get-Process chrome, chromedriver -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
     }
     $attempt++
+
+    # Avvia lo scraper (blocca fino all'uscita, come nella versione originale)
     Push-Location $PSScriptRoot
     & $python $paramList.ToArray()
     $scrapeExit = $LASTEXITCODE

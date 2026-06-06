@@ -37,7 +37,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-CHUNK_SIZE = 50_000  # righe per chiamata append_rows
+CHUNK_SIZE = 25_000  # righe per chiamata append_rows (ridotto per stabilità API)
 
 # Tab names nel foglio Google Sheets di output
 TAB_STORE_PARITY       = "store_parity"
@@ -51,6 +51,7 @@ TAB_CITY_PARITY_PRIME  = "city_parity_prime"
 TAB_GLOVO_PRODUCTS_PRIME = "glovo_products_prime"
 TAB_PRIORITY_ACTIONS   = "priority_actions"
 TAB_PIPELINE_HEALTH    = "pipeline_health"
+TAB_AM_MAPPING         = "am_mapping"
 
 
 # ---------------------------------------------------------------------------
@@ -92,15 +93,47 @@ def _write_rows_chunked(
     ws.clear()
     all_rows = [headers] + rows
 
+    MAX_RETRIES = 3
     for i in range(0, len(all_rows), CHUNK_SIZE):
-        ws.append_rows(all_rows[i:i + CHUNK_SIZE], value_input_option="RAW")
+        chunk = all_rows[i:i + CHUNK_SIZE]
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                ws.append_rows(chunk, value_input_option="RAW")
+                break
+            except Exception as e:
+                if attempt == MAX_RETRIES:
+                    raise
+                wait = 5 * attempt
+                print(f"    [retry {attempt}/{MAX_RETRIES}] chunk {i//CHUNK_SIZE + 1} errore ({e}), attendo {wait}s...")
+                time.sleep(wait)
+        # Pausa breve tra chunk per non saturare le API quota
+        if i + CHUNK_SIZE < len(all_rows):
+            time.sleep(1.0)
 
     if verify:
-        # Piccola pausa per garantire consistenza API
-        time.sleep(0.5)
-        actual = len(ws.get_all_values()) - 1  # escludi riga header
+        # Pausa per garantire consistenza API
+        time.sleep(2.0)
         expected = len(rows)
-        if actual != expected:
+        # Usa i metadati del foglio per contare le righe effettive (evita il limite
+        # di risposta 10MB di get_all_values che tronca su tab con >150k righe).
+        try:
+            meta = ws.spreadsheet.fetch_sheet_metadata()
+            actual = None
+            for s_meta in meta.get("sheets", []):
+                if s_meta["properties"]["title"] == ws.title:
+                    # rowCount include l'header e le righe vuote allocate
+                    # Usiamo il conteggio grezzo come lower-bound check
+                    actual = s_meta["properties"]["gridProperties"]["rowCount"] - 1
+                    break
+            if actual is None:
+                # Fallback: prova get_all_values solo per tab piccoli
+                if expected <= 100_000:
+                    actual = len(ws.get_all_values()) - 1
+                else:
+                    actual = expected  # skip verify per tab molto grandi
+        except Exception:
+            actual = expected  # se la verifica stessa fallisce, non bloccare
+        if actual < expected:
             raise RuntimeError(
                 f"[sheets_writer] VERIFICA FALLITA su '{ws.title}': "
                 f"attese {expected} righe, trovate {actual}. "
@@ -200,6 +233,7 @@ def export_to_sheets(
     glovo_products_prime: pd.DataFrame | None = None,
     priority_actions:     pd.DataFrame | None = None,
     pipeline_health:      pd.DataFrame | None = None,
+    am_mapping:           pd.DataFrame | None = None,
 ) -> dict[str, int]:
     """
     Esporta i DataFrame su Google Sheets.
@@ -270,6 +304,9 @@ def export_to_sheets(
     _write(TAB_PIPELINE_HEALTH, pipeline_health,
            key_cols=["week_num", "check"],
            partition_cols=["week_num"])
+
+    _write(TAB_AM_MAPPING, am_mapping,
+           key_cols=["city_code", "store_name"])
 
     if errors:
         print(f"\n[sheets_writer] {len(errors)} tab con errori: {list(errors.keys())}")

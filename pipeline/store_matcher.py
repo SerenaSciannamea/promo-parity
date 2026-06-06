@@ -395,3 +395,47 @@ def reject_match(city_code: str, glovo_name: str,
     ]
     save_review_queue(updated_review, review_path)
     print(f"[store_matcher] Match rifiutato: {city_code} | {glovo_name} (non su Deliveroo)")
+
+
+def mark_not_on_deliveroo(city_code: str, glovo_name: str,
+                          mapping_path: Path = MAPPING_CSV,
+                          review_path:  Path = REVIEW_CSV) -> None:
+    """
+    Marca uno store come 'Non su Deliveroo' (assente dalla piattaforma,
+    ma senza esclusiva commerciale con Glovo).
+    Source = 'not_on_deliveroo' — distinto da 'manual_rejected' (Esclusiva Glovo).
+    """
+    mapping = load_mapping()
+    review  = load_review_queue(review_path)
+
+    rev_row  = review[(review["city_code"] == city_code) & (review["glovo_name"] == glovo_name)]
+    store_id = rev_row["glovo_store_id"].iloc[0] if len(rev_row) > 0 else ""
+
+    new_row = pd.DataFrame([{
+        "city_code":       city_code,
+        "glovo_name":      glovo_name,
+        "glovo_store_id":  store_id,
+        "deliveroo_name":  "",
+        "confidence":      "1.0",
+        "source":          "not_on_deliveroo",
+    }])
+    updated_mapping = pd.concat([mapping, new_row], ignore_index=True).drop_duplicates(
+        subset=["city_code", "glovo_name"], keep="last"
+    )
+    save_mapping(updated_mapping)
+
+    updated_review = review[
+        ~((review["city_code"] == city_code) & (review["glovo_name"] == glovo_name))
+    ]
+    save_review_queue(updated_review, review_path)
+    print(f"[store_matcher] Non su Deliveroo: {city_code} | {glovo_name}")
+
+
+def mark_glovo_exclusive(city_code: str, glovo_name: str,
+                         mapping_path: Path = MAPPING_CSV,
+                         review_path:  Path = REVIEW_CSV) -> None:
+    """
+    Marca uno store come 'Esclusiva Glovo' (accordo commerciale di esclusiva).
+    Source = 'manual_rejected'.
+    """
+    reject_match(city_code, glovo_name, review_path)

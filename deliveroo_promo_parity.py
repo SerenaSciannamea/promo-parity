@@ -262,8 +262,8 @@ def init_driver(show: bool) -> webdriver.Chrome:
     options = Options()
     options.page_load_strategy = "eager"
     if not show:
-        options.add_argument("--headless=old")
-    options.add_argument("--window-size=1440,2200")
+        options.add_argument("--headless=old")              # old headless meno rilevabile come bot
+    options.add_argument("--window-size=1280,900")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-gpu")
@@ -275,6 +275,7 @@ def init_driver(show: bool) -> webdriver.Chrome:
     options.add_argument("--disable-renderer-backgrounding")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-sync")
+    options.add_argument("--disable-features=TranslateUI")
     options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0 Safari/537.36"
@@ -288,8 +289,16 @@ def init_driver(show: bool) -> webdriver.Chrome:
             "profile.managed_default_content_settings.images": 2,
         },
     )
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    driver.set_page_load_timeout(20)
+    # Usa Chrome 124 for Testing (stabile con Selenium) invece del Chrome di sistema
+    _chrome124 = r"C:\ChromeTest124\chrome-win64\chrome.exe"
+    _driver124  = r"C:\ChromeTest124\chromedriver-win64\chromedriver.exe"
+    import os as _os
+    if _os.path.exists(_chrome124) and _os.path.exists(_driver124):
+        options.binary_location = _chrome124
+        driver = webdriver.Chrome(service=Service(_driver124), options=options)
+    else:
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver.set_page_load_timeout(30)
     return driver
 
 
@@ -413,9 +422,17 @@ def restaurant_name_from_url(url: str) -> str:
     return slug.title()
 
 
+_UI_ELEMENT_NAMES = {
+    "tracking ordine limitato",
+    "tracking ordine",
+    "ordine limitato",
+}
+
 def is_placeholder_restaurant_name(text: str) -> bool:
     cleaned = clean_text(text)
     if not cleaned:
+        return True
+    if cleaned.lower() in _UI_ELEMENT_NAMES:
         return True
     return bool(PREORDER_REGEX.search(cleaned))
 

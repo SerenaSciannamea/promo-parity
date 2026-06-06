@@ -110,7 +110,27 @@ def extract_pct_deliveroo(promotion_type: str | None) -> float:
     return max(float(m.replace(",", ".")) for m in matches)
 
 
-PCT_SUPERIORITY_THRESHOLD = 2.0   # pp minima per promuovere da PARITY a SUPERIORITY/INFERIORITY
+def extract_min_basket_deliveroo(promotion_type: str | None) -> float:
+    """
+    Estrae il basket minimo in € dal testo promo Deliveroo.
+    Es. "Spendi almeno 10 €, risparmia il 10%" -> 10.0
+    Ritorna 0.0 se non trovato.
+    """
+    if not promotion_type:
+        return 0.0
+    matches = re.findall(
+        r"(?:spendi|almeno|min|da)\s*(?:almeno|min|da)?\s*(\d+(?:[.,]\d+)?)\s*€",
+        str(promotion_type), re.I,
+    )
+    if not matches:
+        return 0.0
+    return min(float(m.replace(",", ".")) for m in matches)
+
+
+PCT_SUPERIORITY_THRESHOLD  = 2.0   # pp minima per promuovere da PARITY a SUPERIORITY/INFERIORITY
+PCT_PROMO_PRODUCTS_MIN     = 2     # n. minimo prodotti in promo Glovo per tiebreaker su conteggio
+BASKET_DIFF_THRESHOLD      = 10.0  # €: se |basket_glovo - basket_deliveroo| > soglia,
+                                    # segnali contrastanti (% vs basket) → PARITY
 
 
 def parity_label(
@@ -118,6 +138,9 @@ def parity_label(
     deliveroo_rank: float,
     glovo_pct_off: float = 0.0,
     deliveroo_pct_off: float = 0.0,
+    glovo_promo_products: int = 0,
+    glovo_min_basket: float = 0.0,
+    deliveroo_min_basket: float = 0.0,
 ) -> str:
     """
     Restituisce 'SUPERIORITY', 'PARITY' o 'INFERIORITY' dal punto di vista Glovo.
@@ -125,8 +148,16 @@ def parity_label(
     Logica:
     1. Se rank diverso: vince il rank piu' basso (promo piu' forte).
     2. Se rank uguale E entrambi sono promo % (rank 2.0):
-       confronta la percentuale di sconto con soglia PCT_SUPERIORITY_THRESHOLD.
+       a. Confronta la % MAX di sconto (glovo_pct_off = max su prodotti in promo,
+          deliveroo_pct_off = max estratta dal testo Deliveroo).
+          Se differenza >= soglia -> SUPERIORITY / INFERIORITY.
+       b. Se % MAX sostanzialmente uguale (dentro soglia): usa il numero di prodotti
+          in promo Glovo come tiebreaker. Se Glovo ha >= PCT_PROMO_PRODUCTS_MIN
+          prodotti in promo -> SUPERIORITY (piu' prodotti coperti a parita' di sconto).
     3. Altrimenti: PARITY.
+
+    Nota: glovo_pct_off deve essere la % MAX (non media) per simmetria con
+    extract_pct_deliveroo che restituisce gia' il max dal testo Deliveroo.
 
     Quando entrambi sono senza promo (rank 6) -> PARITY.
     """
@@ -135,13 +166,47 @@ def parity_label(
     elif glovo_rank > deliveroo_rank:
         return "INFERIORITY"
     else:
-        # Stesso rank: per promo %-prodotto confronta la % di sconto
+        # Stesso rank: per promo %-prodotto confronta la % MAX di sconto
         if glovo_rank == 2.0 and glovo_pct_off > 0 and deliveroo_pct_off > 0:
             diff = glovo_pct_off - deliveroo_pct_off
             if diff >= PCT_SUPERIORITY_THRESHOLD:
                 return "SUPERIORITY"
             elif diff <= -PCT_SUPERIORITY_THRESHOLD:
                 return "INFERIORITY"
+            else:
+                # % MAX sostanzialmente uguale: tiebreaker sul numero di prodotti in promo.
+                if glovo_promo_products >= PCT_PROMO_PRODUCTS_MIN:
+                    return "SUPERIORITY"
+
+        # Stesso rank 3.0 (BASKET_PERCENTAGE): opzione C
+        # Se |basket_diff| <= BASKET_DIFF_THRESHOLD → la % decide (basket simile = trascurabile)
+        # Se |basket_diff| > BASKET_DIFF_THRESHOLD con segnali contrastanti → PARITY
+        if glovo_rank == 3.0 and glovo_pct_off > 0 and deliveroo_pct_off > 0:
+            pct_diff    = glovo_pct_off - deliveroo_pct_off
+            basket_diff = (glovo_min_basket or 0) - (deliveroo_min_basket or 0)  # <0 = Glovo più accessibile
+            basket_diff_abs = abs(basket_diff)
+
+            if basket_diff_abs <= BASKET_DIFF_THRESHOLD:
+                # Basket simile → la % è l'unica metrica rilevante
+                if pct_diff >= PCT_SUPERIORITY_THRESHOLD:
+                    return "SUPERIORITY"
+                elif pct_diff <= -PCT_SUPERIORITY_THRESHOLD:
+                    return "INFERIORITY"
+                else:
+                    # Stessa %: tiebreaker sul basket (minore = più accessibile)
+                    if basket_diff < 0:
+                        return "SUPERIORITY"
+                    elif basket_diff > 0:
+                        return "INFERIORITY"
+            else:
+                # Basket significativamente diverso
+                if pct_diff >= PCT_SUPERIORITY_THRESHOLD and basket_diff <= 0:
+                    return "SUPERIORITY"   # % maggiore E basket inferiore → chiaramente meglio
+                elif pct_diff <= -PCT_SUPERIORITY_THRESHOLD and basket_diff >= 0:
+                    return "INFERIORITY"   # % minore E basket superiore → chiaramente peggio
+                else:
+                    pass  # Segnali contrastanti → PARITY (cade nel return finale)
+
         return "PARITY"
 
 

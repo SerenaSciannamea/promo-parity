@@ -126,16 +126,33 @@ def repair_tab(
         if not csv_path.exists():
             print(f"  [skip] {csv_path.name} non trovato")
             continue
-        df = pd.read_csv(csv_path, dtype=str).fillna("")
-        # Aggiungi week_num se richiesto e mancante
-        if week and "week_num" not in df.columns:
-            df["week_num"] = week
-        # Filtra colonne per deliveroo_products
-        if tab_name == TAB_DELIVEROO_PRODUCTS:
-            present = [c for c in DELIVEROO_PRODUCTS_COLS if c in df.columns]
-            df = df[present]
+        # Per glovo_products usa load_glovo_csv per normalizzare il nuovo schema
+        # (type_of_promo_np → type_of_promo, ecc.) e filtra ai soli promo-attivi
+        if tab_name == TAB_GLOVO_PRODUCTS:
+            from pipeline.glovo_reader import load_glovo_csv
+            raw = load_glovo_csv(str(csv_path))
+            raw["week_num"] = week  # forza la settimana dal nome file
+            gp_cols = ["city_code", "store_name", "week_num", "product_name",
+                       "type_of_promo", "has_active_promo",
+                       "avg_percentage_off", "avg_unit_price", "total_product_sold",
+                       "min_basket_size_np", "min_basket_size_p"]
+            gp_present = [c for c in gp_cols if c in raw.columns]
+            df = raw[gp_present].copy()
+            # Solo prodotti in promo (allineato a run_weekly per rispettare limite API)
+            if "has_active_promo" in df.columns:
+                df = df[df["has_active_promo"].str.upper() == "Y"]
+            print(f"  [load] {csv_path.name}: {len(df)} righe promo-attive")
+        else:
+            df = pd.read_csv(csv_path, dtype=str).fillna("")
+            # Aggiungi week_num se richiesto e mancante
+            if week and "week_num" not in df.columns:
+                df["week_num"] = week
+            # Filtra colonne per deliveroo_products
+            if tab_name == TAB_DELIVEROO_PRODUCTS:
+                present = [c for c in DELIVEROO_PRODUCTS_COLS if c in df.columns]
+                df = df[present]
+            print(f"  [load] {csv_path.name}: {len(df)} righe")
         frames.append(df)
-        print(f"  [load] {csv_path.name}: {len(df)} righe")
 
     if not frames:
         return {"tab": tab_name, "status": "skip", "reason": "nessun CSV leggibile"}

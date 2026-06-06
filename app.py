@@ -354,6 +354,9 @@ def _cloud_unmatched() -> pd.DataFrame:
 def _cloud_glovo_products() -> pd.DataFrame:
     return _cloud_load_all().get("glovo_products", pd.DataFrame())
 
+def _cloud_am_mapping() -> pd.DataFrame:
+    return _cloud_load_all().get("am_mapping", pd.DataFrame())
+
 
 def _cloud_deliveroo_products() -> pd.DataFrame:
     return _cloud_load_all().get("deliveroo_products", pd.DataFrame())
@@ -421,6 +424,20 @@ def _local_pipeline_health() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Facade: funzioni uniformi usate dall'app
 # ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def load_am_mapping() -> pd.DataFrame:
+    """Carica il mapping store → SF_registered_AM."""
+    if _is_cloud_mode():
+        return _cloud_am_mapping()
+    # Locale: legge da data/am_mapping.csv
+    _p = ROOT / "data" / "am_mapping.csv"
+    if _p.exists():
+        df = pd.read_csv(_p, dtype=str).fillna("")
+        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+        return df
+    return pd.DataFrame()
+
 
 @st.cache_data(ttl=300)
 def load_store_parity() -> pd.DataFrame:
@@ -622,7 +639,8 @@ def load_glovo_products(city_code: str, store_name: str, week_num: str) -> pd.Da
         if week_num:
             mask = mask & (df["week_num"] == week_num)
         cols = ["product_name", "type_of_promo", "has_active_promo",
-                "avg_percentage_off", "avg_unit_price", "total_product_sold", "week_num"]
+                "avg_percentage_off", "avg_unit_price", "total_product_sold",
+                "min_basket_size_np", "week_num"]
         cols_present = [c for c in cols if c in df.columns]
         result = df[mask][cols_present]
         sort_cols = [c for c in ["has_active_promo", "avg_unit_price"] if c in result.columns]
@@ -695,6 +713,27 @@ def save_confirmed_match(city: str, glovo_name: str, deliveroo_name: str) -> Non
 
 def save_rejected_match(city: str, glovo_name: str) -> None:
     save_confirmed_match(city, glovo_name, "")
+
+
+def save_not_on_deliveroo(city: str, glovo_name: str) -> None:
+    """Marca lo store come 'Non su Deliveroo' (assente dalla piattaforma, no esclusiva)."""
+    from pipeline.store_matcher import mark_not_on_deliveroo
+    if _is_cloud_mode():
+        # In cloud mode: salva nel mapping locale e sincronizza su Sheets
+        mark_not_on_deliveroo(city, glovo_name)
+        _sync_mapping_to_sheets()
+    else:
+        mark_not_on_deliveroo(city, glovo_name)
+
+
+def save_glovo_exclusive(city: str, glovo_name: str) -> None:
+    """Marca lo store come 'Esclusiva Glovo' (accordo commerciale di esclusiva)."""
+    from pipeline.store_matcher import mark_glovo_exclusive
+    if _is_cloud_mode():
+        mark_glovo_exclusive(city, glovo_name)
+        _sync_mapping_to_sheets()
+    else:
+        mark_glovo_exclusive(city, glovo_name)
 
 
 def _run_save(action_fn, *args, success_msg: str) -> None:
@@ -776,19 +815,48 @@ def sidebar() -> tuple[list[str], list[str]]:
     sel_cities = st.sidebar.multiselect("Città", all_cities,
                                         default=all_cities)
 
+    # Filtro AM — carica mapping e mostra selectbox
+    am_df = load_am_mapping()
+    sel_am = None
+    if not am_df.empty and "sf_registered_am" in am_df.columns:
+        all_ams = sorted(am_df["sf_registered_am"].dropna().unique())
+        all_ams = [a for a in all_ams if a.strip()]
+        if all_ams:
+            sel_am = st.sidebar.selectbox(
+                "👤 Responsabile AM",
+                options=["Tutti"] + all_ams,
+                index=0,
+            )
+            if sel_am == "Tutti":
+                sel_am = None
+
     st.sidebar.divider()
     if st.sidebar.button("🔄 Aggiorna dati"):
         clear_cache()
         st.rerun()
 
-    return sel_weeks, sel_cities
+    return sel_weeks, sel_cities, sel_am
 
 
 # ---------------------------------------------------------------------------
 # TAB 1 — City Parity Overview
 # ---------------------------------------------------------------------------
 
-def tab_city_parity(sel_weeks, sel_cities, prime: bool = False):
+def _am_filtered_stores(sel_am: str | None) -> set[tuple[str, str]] | None:
+    """Ritorna il set (city_code, store_name) assegnati all'AM, o None se nessun filtro."""
+    if not sel_am:
+        return None
+    am_df = load_am_mapping()
+    if am_df.empty or "sf_registered_am" not in am_df.columns:
+        return None
+    mask = am_df["sf_registered_am"].str.strip().str.lower() == sel_am.strip().lower()
+    filtered = am_df[mask]
+    if filtered.empty:
+        return set()
+    return set(zip(filtered["city_code"].str.strip(), filtered["store_name"].str.strip()))
+
+
+def tab_city_parity(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
     title = "City Parity Overview — Vista Prime" if prime else "City Parity Overview"
     if prime:
         st.header(title)
@@ -1285,7 +1353,7 @@ def _products_table_html(
     )
 
 
-def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
+def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
     import base64 as _b64mod
     _icon = ROOT / "assets" / "storePhone.png"
     if not prime:
@@ -1318,6 +1386,16 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
         df = df[df["city_code"].isin(sel_cities)]
     if sel_weeks:
         df = df[df["week_num"].isin(sel_weeks)]
+
+    # Filtro AM — mantieni solo gli store assegnati all'AM selezionato
+    _am_stores = _am_filtered_stores(sel_am)
+    if _am_stores is not None:
+        df = df[df.apply(
+            lambda r: (str(r.get("city_code","")).strip(), str(r.get("glovo_name","")).strip())
+                      in _am_stores, axis=1
+        )]
+        if sel_am:
+            st.info(f"👤 Filtro AM attivo: **{sel_am}** — {len(df)} store")
 
     # Merge conteggio prodotti in promo Deliveroo
     # Filtra restaurant_name vuoti per evitare join many-to-many sugli UNMATCHED
@@ -1405,8 +1483,8 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
     display_cols = [
         "city_code", "glovo_name", "deliveroo_name", "week_num",
         "parity",
-        "glovo_rank_label", "glovo_pct_off", "glovo_promo_products",
-        "deliveroo_rank_label", "deliveroo_promo_text", "deliveroo_promo_products",
+        "glovo_rank_label", "glovo_pct_off", "glovo_min_basket", "glovo_promo_products",
+        "deliveroo_rank_label", "deliveroo_promo_text", "deliveroo_pct_off", "deliveroo_min_basket", "deliveroo_promo_products",
         "revenue", "promo_coverage_pct"
     ]
     available = [c for c in display_cols if c in df_sorted.columns]
@@ -1438,8 +1516,26 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
 
     # Formatta colonne numeriche
     if "glovo_pct_off" in disp.columns:
-        disp["glovo_pct_off"] = pd.to_numeric(disp["glovo_pct_off"], errors="coerce") \
-            .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
+        def _fmt_glovo_pct(row):
+            pct = pd.to_numeric(row.get("glovo_pct_off"), errors="coerce")
+            if pd.isna(pct):
+                return ""
+            label = f"{pct:.1f}%"
+            if str(row.get("glovo_rank_label", "")).strip() == "Basket %":
+                basket = pd.to_numeric(row.get("glovo_min_basket"), errors="coerce")
+                if pd.notna(basket) and basket > 0:
+                    label += f" min €{basket:.0f}"
+            return label
+        disp["glovo_pct_off"] = disp.apply(_fmt_glovo_pct, axis=1)
+
+    # Per BASKET_PERCENTAGE: tutti i prodotti sono in promo → "Full menu"
+    if "glovo_promo_products" in disp.columns and "glovo_rank_label" in disp.columns:
+        is_basket = disp["glovo_rank_label"].str.strip() == "Basket %"
+        disp["glovo_promo_products"] = disp["glovo_promo_products"].astype(str)
+        disp.loc[is_basket, "glovo_promo_products"] = "Full menu"
+
+    # Rimuovi colonne helper usate solo per formattazione
+    disp = disp.drop(columns=["glovo_min_basket", "deliveroo_min_basket"], errors="ignore")
     if "revenue" in disp.columns:
         disp["revenue"] = pd.to_numeric(disp["revenue"], errors="coerce") \
             .apply(lambda x: f"{x:,.0f}€".replace(",", ".") if pd.notna(x) else "")
@@ -1665,6 +1761,12 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False):
                     if row.get("has_active_promo", "N") == "Y":
                         t = row.get("type_of_promo", "")
                         pct = row.get("avg_percentage_off")
+                        basket = row.get("min_basket_size_np")
+                        if t == "BASKET_PERCENTAGE":
+                            label = f"✅ {t} ({pct:.0f}%)" if pct and pct > 0 else f"✅ {t}"
+                            if basket and float(basket) > 0:
+                                label += f" min €{float(basket):.0f}"
+                            return label
                         if pct and pct > 0:
                             return f"✅ {t} ({pct:.0f}%)"
                         return f"✅ {t}" if t else "✅ Promo"
@@ -2111,210 +2213,198 @@ def tab_store_matching():
         )
     else:
         st.header("🔗 Store Matching")
-    st.caption("Tre sezioni: candidati da confermare · matching manuale · ground truth")
 
-    # Mostra feedback dell'ultima operazione di salvataggio
+    # Feedback ultima operazione
     if "last_save_msg" in st.session_state:
         kind, msg = st.session_state.pop("last_save_msg")
         if kind == "ok":
             st.success(f"✅ {msg}")
         else:
-            st.error(f"❌ Errore durante il salvataggio: {msg}")
+            st.error(f"❌ Errore: {msg}")
 
-    review_df   = load_review_queue()
-    unmatched   = load_unmatched_stores()
+    store_df    = load_store_parity()
     mapping_df  = load_store_mapping()
     deliv_names = load_deliveroo_names_by_city()
 
-    # KPI top
-    k1, k2, k3 = st.columns(3)
-    k1.metric("⏳ Da revisionare",  len(review_df))
-    k2.metric("❓ Non matchati",    len(unmatched))
-    k3.metric("✅ Ground truth",    len(mapping_df))
+    # ── KPI ──────────────────────────────────────────────────────────────────
+    latest_week = store_df["week_num"].max() if not store_df.empty else ""
+    sp = store_df[store_df["week_num"] == latest_week] if latest_week else store_df
+
+    n_da_matchare = int((sp["parity"] == "UNMATCHED").sum()) if not sp.empty else 0
+    n_matchati    = int(sp["parity"].isin(["SUPERIORITY","PARITY","INFERIORITY"]).sum()) if not sp.empty else 0
+    n_exclusive   = int((mapping_df["source"] == "manual_rejected").sum()) if not mapping_df.empty else 0
+    n_not_deliv   = int((mapping_df["source"] == "not_on_deliveroo").sum()) if not mapping_df.empty else 0
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🔍 Da matchare",        n_da_matchare)
+    k2.metric("✅ Matchati",            n_matchati)
+    k3.metric("⭐ Esclusiva Glovo",     n_exclusive)
+    k4.metric("🚫 Non su Deliveroo",   n_not_deliv)
     st.divider()
 
     # =========================================================================
-    # SEZIONE 1 — Candidati fuzzy da confermare / rifiutare
+    # SEZIONE 1 — Store UNMATCHED da gestire
     # =========================================================================
-    with st.expander(f"⏳ Candidati automatici da revisionare  ({len(review_df)} store)", expanded=len(review_df) > 0):
-        if review_df.empty:
-            st.success("Nessun candidato in coda — tutto a posto!")
+    unmatched_df = sp[sp["parity"] == "UNMATCHED"].copy() if not sp.empty else pd.DataFrame()
+
+    st.subheader(f"🔍 Store da matchare  ({len(unmatched_df)})")
+    if unmatched_df.empty:
+        st.success("Nessuno store da matchare per la settimana corrente!")
+    else:
+        # Filtri
+        col_f1, col_f2 = st.columns([1, 3])
+        with col_f1:
+            cities_u = ["Tutte"] + sorted(unmatched_df["city_code"].unique())
+            sel_city_u = st.selectbox("Città", cities_u, key="unm_city")
+        with col_f2:
+            search_u = st.text_input("🔍 Cerca store Glovo", "", key="unm_search")
+
+        df_u = unmatched_df if sel_city_u == "Tutte" else unmatched_df[unmatched_df["city_code"] == sel_city_u]
+        if search_u:
+            df_u = df_u[df_u["glovo_name"].str.contains(search_u, case=False, na=False)]
+        df_u = df_u.sort_values("revenue", ascending=False)
+
+        # Tabella navigabile
+        disp_u = df_u[["city_code","glovo_name","revenue"]].rename(
+            columns={"city_code":"Città","glovo_name":"Store Glovo","revenue":"Revenue €"}
+        )
+        st.dataframe(disp_u, use_container_width=True, hide_index=True, height=220)
+
+        # Selezione store
+        st.markdown("**Seleziona uno store per gestirlo:**")
+        if df_u.empty:
+            st.info("Nessuno store con questi filtri.")
         else:
-            # Filtro città
-            cities_r = sorted(review_df["city_code"].unique())
-            sel_city_r = st.selectbox("Città", ["Tutte"] + cities_r, key="rev_city")
-            df_r = review_df if sel_city_r == "Tutte" else review_df[review_df["city_code"] == sel_city_r]
-            df_r = df_r.sort_values("score", ascending=False)
-
-            st.dataframe(
-                df_r[["city_code","glovo_name","candidate_deliveroo","score","reason"]],
-                use_container_width=True, hide_index=True
+            sel_glovo = st.selectbox(
+                "Store Glovo",
+                options=df_u["glovo_name"].tolist(),
+                format_func=lambda n: f"{df_u[df_u['glovo_name']==n]['city_code'].iloc[0]} | {n}",
+                key="unm_glovo"
             )
+            sel_city_store = df_u[df_u["glovo_name"] == sel_glovo]["city_code"].iloc[0]
 
-            st.markdown("**Conferma o rifiuta un candidato:**")
-            sel_idx = st.selectbox(
-                "Seleziona store",
-                options=range(len(df_r)),
-                format_func=lambda i: f"{df_r.iloc[i]['city_code']} | {df_r.iloc[i]['glovo_name']}  (score {df_r.iloc[i]['score']})",
-                key="rev_sel"
-            )
-            sel_row = df_r.iloc[sel_idx]
+            st.markdown(f"**Store selezionato:** `{sel_city_store}` — `{sel_glovo}`")
 
-            col_info, col_action = st.columns([2, 1])
-            with col_info:
-                st.write(f"**Glovo:** `{sel_row['glovo_name']}`")
-                st.write(f"**Candidato Deliveroo:** `{sel_row['candidate_deliveroo']}`  — score **{sel_row['score']}**")
-
-                # Dropdown con tutti i nomi Deliveroo della città per correzione rapida
-                city_options = deliv_names.get(sel_row["city_code"], [])
-                default_idx  = city_options.index(sel_row["candidate_deliveroo"]) \
-                               if sel_row["candidate_deliveroo"] in city_options else 0
-                deliv_choice = st.selectbox(
-                    "Scegli dalla lista scrappata",
-                    options=["— Non in lista (scrivi sotto) —"] + city_options,
-                    index=default_idx + 1 if sel_row["candidate_deliveroo"] in city_options else 0,
-                    key="rev_choice"
+            col_match, col_btn = st.columns([3, 2])
+            with col_match:
+                # Lista + testo libero
+                city_opts   = deliv_names.get(sel_city_store, [])
+                deliv_input = st.text_input(
+                    "Nome Deliveroo",
+                    placeholder="Scrivi il nome esatto su Deliveroo…",
+                    key="unm_deliv_text"
                 )
-                # Campo libero per nomi non in lista (store senza promo attiva)
-                custom_name = st.text_input(
-                    "Oppure scrivi il nome Deliveroo manualmente",
-                    placeholder="Es: Pizzeria da Paolo  (lascia vuoto se usi la lista sopra)",
-                    key="rev_custom"
-                )
-                st.caption("💡 Usa il testo libero se lo store è su Deliveroo ma non ha promo attive e quindi non compare nella lista scrappata. Verrà registrato con **nessuna promozione** per questa settimana.")
-
-            with col_action:
-                st.write("")
-                st.write("")
-                # Determina il nome finale: testo libero ha priorità sul dropdown
-                final_choice = custom_name.strip() if custom_name.strip() else (
-                    "" if deliv_choice == "— Non in lista (scrivi sotto) —" else deliv_choice
-                )
-                if st.button("✅ Conferma", type="primary", key="rev_confirm"):
-                    if not final_choice:
-                        _run_save(save_rejected_match, sel_row["city_code"], sel_row["glovo_name"],
-                                  success_msg="Marcato come non presente su Deliveroo")
-                    else:
-                        label = " (nessuna promo attiva)" if custom_name.strip() else ""
-                        _run_save(save_confirmed_match, sel_row["city_code"], sel_row["glovo_name"], final_choice,
-                                  success_msg=f"Match confermato: {sel_row['glovo_name']} → {final_choice}{label}")
-
-                if st.button("❌ Non su Deliveroo", key="rev_reject"):
-                    _run_save(save_rejected_match, sel_row["city_code"], sel_row["glovo_name"],
-                              success_msg=f"{sel_row['glovo_name']} escluso (non su Deliveroo)")
-
-    # =========================================================================
-    # SEZIONE 2 — Matching manuale store UNMATCHED
-    # =========================================================================
-    with st.expander(f"❓ Matching manuale store non matchati  ({len(unmatched)} store)", expanded=False):
-        if unmatched.empty:
-            st.success("Tutti gli store sono matchati!")
-        else:
-            st.caption("Questi store Glovo non hanno ancora un corrispettivo Deliveroo. "
-                       "Seleziona la città, cerca lo store, scegli il nome Deliveroo dalla lista.")
-
-            # Filtri
-            col_f1, col_f2 = st.columns([1, 2])
-            with col_f1:
-                cities_u = sorted(unmatched["city_code"].unique())
-                sel_city_u = st.selectbox("Città", cities_u, key="unm_city")
-            with col_f2:
-                search_u = st.text_input("🔍 Cerca per nome store Glovo", "", key="unm_search")
-
-            df_u = unmatched[unmatched["city_code"] == sel_city_u]
-            if search_u:
-                df_u = df_u[df_u["glovo_name"].str.contains(search_u, case=False, na=False)]
-
-            # Tabella store unmatched con revenue per prioritizzare
-            st.dataframe(
-                df_u[["glovo_name","revenue"]].rename(columns={"glovo_name":"Store Glovo","revenue":"Revenue €"}),
-                use_container_width=True, hide_index=True, height=220
-            )
-
-            st.markdown("**Assegna un match manuale:**")
-            if len(df_u) == 0:
-                st.info("Nessuno store trovato con questi filtri.")
-            else:
-                col_s1, col_s2 = st.columns(2)
-                with col_s1:
-                    sel_glovo = st.selectbox(
-                        "Store Glovo da matchare",
-                        options=df_u["glovo_name"].tolist(),
-                        key="unm_glovo"
+                if city_opts:
+                    deliv_list = st.selectbox(
+                        "…oppure scegli dalla lista scrappata",
+                        options=["— scegli —"] + city_opts,
+                        key="unm_deliv_list"
                     )
-                with col_s2:
-                    city_opts = deliv_names.get(sel_city_u, [])
-                    sel_deliv = st.selectbox(
-                        "Scegli dalla lista scrappata",
-                        options=["— Non in lista (scrivi sotto) —"] + city_opts,
-                        key="unm_deliv"
+                    final_deliv = deliv_input.strip() or (
+                        "" if deliv_list == "— scegli —" else deliv_list
                     )
-                    if not city_opts:
-                        st.caption(f"⚠️ Nessun ristorante scrappato per {sel_city_u} — usa il campo testo.")
+                else:
+                    final_deliv = deliv_input.strip()
 
-                # Campo testo libero sotto i due selectbox
-                custom_deliv = st.text_input(
-                    "Oppure scrivi il nome Deliveroo manualmente",
-                    placeholder="Es: Pizzeria da Paolo  (lascia vuoto se usi la lista sopra)",
-                    key="unm_custom"
-                )
-                st.caption("💡 Usa il testo libero se lo store è su Deliveroo ma non ha promo attive questa settimana. Verrà registrato con **nessuna promozione** nel calcolo di parity.")
+                if st.button("✅ Match", type="primary", key="unm_match", disabled=not final_deliv):
+                    _run_save(save_confirmed_match, sel_city_store, sel_glovo, final_deliv,
+                              success_msg=f"Match: {sel_glovo} → {final_deliv}")
 
-                # Nome finale: testo libero ha priorità
-                final_deliv = custom_deliv.strip() if custom_deliv.strip() else (
-                    "" if sel_deliv == "— Non in lista (scrivi sotto) —" else sel_deliv
-                )
+            with col_btn:
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                if st.button("🚫 NON su Deliveroo", key="unm_not_deliv", use_container_width=True):
+                    _run_save(save_not_on_deliveroo, sel_city_store, sel_glovo,
+                              success_msg=f"{sel_glovo} → Non su Deliveroo")
+                st.markdown("")
+                if st.button("⭐ Esclusiva Glovo", key="unm_exclusive", use_container_width=True):
+                    _run_save(save_glovo_exclusive, sel_city_store, sel_glovo,
+                              success_msg=f"{sel_glovo} → Esclusiva Glovo")
 
-                col_btn1, col_btn2 = st.columns(2)
-                with col_btn1:
-                    if st.button("✅ Salva match", type="primary", key="unm_save"):
-                        if not final_deliv:
-                            _run_save(save_rejected_match, sel_city_u, sel_glovo,
-                                      success_msg=f"{sel_glovo} marcato come non presente su Deliveroo")
-                        else:
-                            label = " (nessuna promo attiva)" if custom_deliv.strip() else ""
-                            _run_save(save_confirmed_match, sel_city_u, sel_glovo, final_deliv,
-                                      success_msg=f"Match salvato: {sel_glovo} → {final_deliv}{label}")
-                with col_btn2:
-                    if st.button("❌ Non su Deliveroo", key="unm_reject"):
-                        _run_save(save_rejected_match, sel_city_u, sel_glovo,
-                                  success_msg=f"{sel_glovo} escluso (non su Deliveroo)")
-                        clear_cache(); st.rerun()
-
-            st.info("💡 I match salvati qui entrano nel **ground truth** e vengono usati automaticamente dalle pipeline successive — non servono più revisioni.")
+    st.divider()
 
     # =========================================================================
-    # SEZIONE 3 — Ground truth (mapping confermati)
+    # SEZIONE 2 — Modifica store già classificati (matchati / esclusivi)
     # =========================================================================
-    with st.expander(f"✅ Ground truth — mapping confermati  ({len(mapping_df)} store)", expanded=False):
-        if mapping_df.empty:
-            st.info("Nessun mapping confermato ancora.")
-        else:
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                sources = mapping_df["source"].unique().tolist() if "source" in mapping_df.columns else []
-                sel_src = st.multiselect("Fonte", sources, default=sources, key="gt_source")
-            with col_f2:
-                search_gt = st.text_input("🔍 Cerca store", "", key="gt_search")
+    st.subheader("✏️ Modifica store già classificati")
 
-            disp = mapping_df[mapping_df["source"].isin(sel_src)] if sel_src else mapping_df
-            if search_gt:
-                disp = disp[disp["glovo_name"].str.contains(search_gt, case=False, na=False)]
+    if mapping_df.empty:
+        st.info("Nessun mapping ancora.")
+    else:
+        col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
+        with col_f1:
+            src_options = ["Tutti","Matchati","Esclusiva Glovo","Non su Deliveroo"]
+            sel_src_edit = st.selectbox("Tipo", src_options, key="edit_src")
+        with col_f2:
+            cities_e = ["Tutte"] + sorted(mapping_df["city_code"].unique())
+            sel_city_e = st.selectbox("Città", cities_e, key="edit_city")
+        with col_f3:
+            search_e = st.text_input("🔍 Cerca store", "", key="edit_search")
 
-            st.dataframe(disp, use_container_width=True, hide_index=True, height=350)
-            st.caption(
-                f"**{len(disp)}** visualizzati  |  "
-                f"**{(mapping_df['deliveroo_name'] != '').sum()}** con match  |  "
-                f"**{(mapping_df['deliveroo_name'] == '').sum()}** esclusi (non su Deliveroo)"
+        df_e = mapping_df.copy()
+        if sel_src_edit == "Matchati":
+            df_e = df_e[df_e["deliveroo_name"].str.strip() != ""]
+        elif sel_src_edit == "Esclusiva Glovo":
+            df_e = df_e[df_e["source"] == "manual_rejected"]
+        elif sel_src_edit == "Non su Deliveroo":
+            df_e = df_e[df_e["source"] == "not_on_deliveroo"]
+        if sel_city_e != "Tutte":
+            df_e = df_e[df_e["city_code"] == sel_city_e]
+        if search_e:
+            df_e = df_e[df_e["glovo_name"].str.contains(search_e, case=False, na=False)]
+
+        st.dataframe(
+            df_e[["city_code","glovo_name","deliveroo_name","source"]].rename(
+                columns={"city_code":"Città","glovo_name":"Store Glovo",
+                         "deliveroo_name":"Store Deliveroo","source":"Tipo"}
+            ),
+            use_container_width=True, hide_index=True, height=200
+        )
+
+        if not df_e.empty:
+            st.markdown("**Seleziona uno store per cambiarne lo status:**")
+            sel_edit = st.selectbox(
+                "Store da modificare",
+                options=df_e["glovo_name"].tolist(),
+                format_func=lambda n: f"{df_e[df_e['glovo_name']==n]['city_code'].iloc[0]} | {n}  [{df_e[df_e['glovo_name']==n]['source'].iloc[0]}]",
+                key="edit_store"
             )
+            edit_city = df_e[df_e["glovo_name"] == sel_edit]["city_code"].iloc[0]
+            edit_src  = df_e[df_e["glovo_name"] == sel_edit]["source"].iloc[0]
 
-        if not mapping_df.empty:
-            st.download_button(
-                "📥 Esporta store_mapping.csv",
-                data=mapping_df.to_csv(index=False).encode("utf-8"),
-                file_name="store_mapping.csv",
-                mime="text/csv",
-            )
+            st.markdown(f"**Store:** `{edit_city}` — `{sel_edit}`  |  Status attuale: `{edit_src}`")
+
+            col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+            with col_e1:
+                new_deliv_name = st.text_input("Nuovo nome Deliveroo", key="edit_new_deliv",
+                                               placeholder="Es: Pizzeria da Paolo")
+            with col_e2:
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                if st.button("✅ Cambia match", key="edit_match",
+                             disabled=not new_deliv_name.strip()):
+                    _run_save(save_confirmed_match, edit_city, sel_edit, new_deliv_name.strip(),
+                              success_msg=f"Match aggiornato: {sel_edit} → {new_deliv_name.strip()}")
+            with col_e3:
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                if st.button("🚫 NON su Deliveroo", key="edit_not_deliv",
+                             use_container_width=True):
+                    _run_save(save_not_on_deliveroo, edit_city, sel_edit,
+                              success_msg=f"{sel_edit} → Non su Deliveroo")
+            with col_e4:
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                if st.button("⭐ Esclusiva Glovo", key="edit_exclusive",
+                             use_container_width=True):
+                    _run_save(save_glovo_exclusive, edit_city, sel_edit,
+                              success_msg=f"{sel_edit} → Esclusiva Glovo")
+
+        st.download_button(
+            "📥 Esporta store_mapping.csv",
+            data=mapping_df.to_csv(index=False).encode("utf-8"),
+            file_name="store_mapping.csv", mime="text/csv",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2514,7 +2604,7 @@ def main():
         )
         st.stop()
 
-    sel_weeks, sel_cities = sidebar()
+    sel_weeks, sel_cities, sel_am = sidebar()
 
     # Icone custom nei tab via CSS injection
     import base64 as _b64mod
@@ -2608,17 +2698,17 @@ def main():
     ])
 
     with tab1:
-        tab_city_parity(sel_weeks, sel_cities)
+        tab_city_parity(sel_weeks, sel_cities, sel_am=sel_am)
     with tab2:
-        tab_store_detail(sel_weeks, sel_cities)
+        tab_store_detail(sel_weeks, sel_cities, sel_am=sel_am)
     with tab3:
         tab_trend(sel_weeks, sel_cities)
     with tab4:
         tab_store_matching()
     with tab5:
-        tab_city_parity(sel_weeks, sel_cities, prime=True)
+        tab_city_parity(sel_weeks, sel_cities, prime=True, sel_am=sel_am)
         st.divider()
-        tab_store_detail(sel_weeks, sel_cities, prime=True)
+        tab_store_detail(sel_weeks, sel_cities, prime=True, sel_am=sel_am)
     with tab6:
         tab_pipeline(sel_weeks, sel_cities)
 

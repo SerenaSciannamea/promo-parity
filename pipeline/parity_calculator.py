@@ -25,7 +25,7 @@ Output city-level (una riga per city_code x week):
 from __future__ import annotations
 
 import pandas as pd
-from pipeline.promo_ranker import rank_deliveroo, parity_label, rank_label, NO_PROMO_RANK, extract_pct_deliveroo
+from pipeline.promo_ranker import rank_deliveroo, parity_label, rank_label, NO_PROMO_RANK, extract_pct_deliveroo, extract_min_basket_deliveroo
 
 
 # ---------------------------------------------------------------------------
@@ -84,14 +84,20 @@ def compute_store_parity(
             if deliveroo_promo is not None:
                 deliveroo_rank = rank_deliveroo(deliveroo_promo)
 
-        deliveroo_pct = extract_pct_deliveroo(deliveroo_promo) if deliveroo_promo else 0.0
-        glovo_pct     = float(row.get("avg_pct_off") or 0)
+        deliveroo_pct        = extract_pct_deliveroo(deliveroo_promo) if deliveroo_promo else 0.0
+        deliveroo_min_basket = extract_min_basket_deliveroo(deliveroo_promo) if deliveroo_promo else 0.0
+        glovo_pct            = float(row.get("max_pct_off") or row.get("avg_pct_off") or 0)
+        glovo_promo_products = int(row.get("promo_product_count") or 0)
+        glovo_min_basket     = float(row.get("min_basket_size") or 0)
 
         if deliveroo_nm:
             parity = parity_label(
                 glovo_rank, deliveroo_rank,
                 glovo_pct_off=glovo_pct,
                 deliveroo_pct_off=deliveroo_pct,
+                glovo_promo_products=glovo_promo_products,
+                glovo_min_basket=glovo_min_basket,
+                deliveroo_min_basket=deliveroo_min_basket,
             )
         elif exclusive_glovo_set and (city, glovo_nm) in exclusive_glovo_set:
             parity = "EXCLUSIVE_GLOVO"
@@ -110,8 +116,10 @@ def compute_store_parity(
             "deliveroo_rank":       deliveroo_rank,
             "deliveroo_rank_label": rank_label(deliveroo_rank),
             "parity":               parity,
-            "glovo_pct_off":        row.get("avg_pct_off"),
+            "glovo_pct_off":        row.get("max_pct_off") if row.get("max_pct_off") is not None else row.get("avg_pct_off"),
+            "glovo_min_basket":     glovo_min_basket if glovo_min_basket else None,
             "deliveroo_pct_off":    round(deliveroo_pct, 1) if deliveroo_pct else None,
+            "deliveroo_min_basket": round(deliveroo_min_basket, 1) if deliveroo_min_basket else None,
             "glovo_promo_products": int(row.get("promo_product_count", 0)),
             "revenue":              float(row.get("revenue", 0)),
             "promo_coverage_pct":   float(row.get("promo_coverage_pct", 0)),
@@ -188,7 +196,10 @@ def compute_city_parity(store_parity: pd.DataFrame) -> pd.DataFrame:
             "w_parity":         w_par,
             "w_inferiority":    w_inf,
             "city_parity_label": city_label,
-            "match_coverage_pct": round(n_matched / n_total * 100, 1) if n_total > 0 else 0.0,
+            # Esclude le esclusive Glovo dal denominatore: sono store
+            # confermati come non presenti su Deliveroo, non "non ancora matchati"
+            "match_coverage_pct": round(n_matched / (n_total - n_exclusive_glovo) * 100, 1)
+                                   if (n_total - n_exclusive_glovo) > 0 else 0.0,
         })
 
     return pd.DataFrame(rows)

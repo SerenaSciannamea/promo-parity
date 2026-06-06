@@ -198,10 +198,16 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     # ---- Migrazioni strutturali (aggiunge colonne nuove senza ricreare il DB) ----
     _migrations = [
-        ("city_parity",       "n_exclusive_glovo", "INTEGER DEFAULT 0"),
-        ("city_parity_prime", "n_exclusive_glovo", "INTEGER DEFAULT 0"),
+        ("city_parity",       "n_exclusive_glovo",  "INTEGER DEFAULT 0"),
+        ("city_parity_prime", "n_exclusive_glovo",  "INTEGER DEFAULT 0"),
         ("store_parity",      "deliveroo_pct_off",  "REAL"),
         ("store_parity_prime","deliveroo_pct_off",  "REAL"),
+        ("glovo_products",    "min_basket_size_np",  "REAL"),
+        ("glovo_products",    "min_basket_size_p",   "REAL"),
+        ("store_parity",      "glovo_min_basket",    "REAL"),
+        ("store_parity",      "deliveroo_min_basket","REAL"),
+        ("store_parity_prime","glovo_min_basket",    "REAL"),
+        ("store_parity_prime","deliveroo_min_basket","REAL"),
     ]
     for _tbl, _col, _typedef in _migrations:
         try:
@@ -349,6 +355,40 @@ def run_pipeline(
         except Exception as e:
             print(f"[store_matcher] Avviso: import manual_matches fallito ({e})")
 
+    # ---- 3b. Scarica AM mapping dal foglio Glovo sorgente ----
+    _GLOVO_SOURCE_SHEET_ID = "1ah5GsEJaSnv-S8jYytar3Vn9tU8MD8IITfNAWtmtveE"
+    am_mapping_df = pd.DataFrame()
+    _am_mapping_path = ROOT / "data" / "am_mapping.csv"
+    if sheets_id and sheets_sa:
+        try:
+            import json as _json2
+            import gspread as _gs2
+            from google.oauth2.service_account import Credentials as _Creds2
+            _scopes2 = ["https://spreadsheets.google.com/feeds",
+                        "https://www.googleapis.com/auth/drive"]
+            _sa2 = _json2.load(open(sheets_sa, encoding="utf-8")) \
+                   if isinstance(sheets_sa, (str, Path)) else dict(sheets_sa)
+            _creds2  = _Creds2.from_service_account_info(_sa2, scopes=_scopes2)
+            _client2 = _gs2.authorize(_creds2)
+            _glovo_sh = _client2.open_by_key(_GLOVO_SOURCE_SHEET_ID)
+            _am_ws    = _glovo_sh.worksheet("Mapping")
+            _am_data  = _am_ws.get_all_records(default_blank="")
+            if _am_data:
+                am_mapping_df = pd.DataFrame(_am_data)
+                am_mapping_df.columns = [c.strip().lower().replace(" ", "_")
+                                          for c in am_mapping_df.columns]
+                # Mantieni solo le colonne utili
+                _am_cols = ["city_code", "store_name", "sf_registered_am", "region"]
+                am_mapping_df = am_mapping_df[[c for c in _am_cols if c in am_mapping_df.columns]]
+                am_mapping_df = am_mapping_df.drop_duplicates(subset=["city_code", "store_name"])
+                am_mapping_df.to_csv(_am_mapping_path, index=False, encoding="utf-8-sig")
+                print(f"[AM] Mapping scaricato: {len(am_mapping_df)} store → {_am_mapping_path.name}")
+        except Exception as _ame:
+            print(f"[AM] Avviso: download mapping AM fallito ({_ame})")
+    if am_mapping_df.empty and _am_mapping_path.exists():
+        am_mapping_df = pd.read_csv(_am_mapping_path, dtype=str).fillna("")
+        print(f"[AM] Mapping caricato da file locale: {len(am_mapping_df)} store")
+
     # ---- 4. Store matching ----
     print(f"\n[4/5] Store matching Glovo <-> Deliveroo")
     glovo_tuples = [
@@ -374,11 +414,11 @@ def run_pipeline(
     exclusive_glovo_set: set[tuple[str, str]] = set()
     if not _mapping_df.empty and "source" in _mapping_df.columns:
         _excl = _mapping_df[
-            (_mapping_df["source"] == "manual_rejected") &
+            (_mapping_df["source"].isin(["manual_rejected", "not_on_deliveroo"])) &
             (_mapping_df["deliveroo_name"].fillna("").str.strip() == "")
         ]
         exclusive_glovo_set = set(zip(_excl["city_code"].str.strip(), _excl["glovo_name"].str.strip()))
-    print(f"      Exclusive Glovo (manual_rejected): {len(exclusive_glovo_set)} store")
+    print(f"      Exclusive Glovo + Non su Deliveroo: {len(exclusive_glovo_set)} store")
 
     store_parity = compute_store_parity(glovo_store, deliveroo_df, match_map, exclusive_glovo_set)
     city_parity  = compute_city_parity(store_parity)
@@ -403,7 +443,8 @@ def run_pipeline(
     known_stores = set(zip(store_parity["city_code"], store_parity["glovo_name"]))
     gp_cols = ["city_code", "store_name", "week_num", "product_name",
                "type_of_promo", "has_active_promo",
-               "avg_percentage_off", "avg_unit_price", "total_product_sold"]
+               "avg_percentage_off", "avg_unit_price", "total_product_sold",
+               "min_basket_size_np", "min_basket_size_p"]
     gp_cols_present = [c for c in gp_cols if c in glovo_raw.columns]
     glovo_products = glovo_raw[gp_cols_present].copy()
     glovo_products = glovo_products[
@@ -411,6 +452,13 @@ def run_pipeline(
             lambda r: (r["city_code"], r["store_name"]) in known_stores, axis=1
         )
     ]
+
+    # Per il tab Sheets: solo prodotti con promo attiva per restare entro il
+    # limite di risposta delle API (get_all_records tronca oltre ~185k righe).
+    # Il DB locale mantiene tutti i prodotti (nessun limite SQLite).
+    glovo_products_sheets = glovo_products[
+        glovo_products.get("has_active_promo", pd.Series(dtype=str)).str.upper() == "Y"
+    ].copy() if "has_active_promo" in glovo_products.columns else glovo_products.copy()
 
     # ---- Prepara glovo_products_prime (colonne np + p affiancate, solo W20+) ----
     if has_prime_data:
@@ -547,15 +595,36 @@ def run_pipeline(
                 city_parity           = city_parity,
                 store_mapping         = mapping_df             if len(mapping_df) > 0              else None,
                 needs_review          = review_df              if len(review_df)  > 0              else None,
-                glovo_products        = glovo_products         if len(glovo_products) > 0          else None,
+                glovo_products        = glovo_products_sheets  if len(glovo_products_sheets) > 0   else None,
                 deliveroo_products    = deliveroo_products,
                 store_parity_prime    = store_parity_prime     if len(store_parity_prime) > 0      else None,
                 city_parity_prime     = city_parity_prime      if len(city_parity_prime)  > 0      else None,
                 glovo_products_prime  = glovo_products_prime   if not glovo_products_prime.empty   else None,
                 priority_actions      = _priority_df           if _priority_df is not None and len(_priority_df) > 0 else None,
                 pipeline_health       = _health_df             if _health_df   is not None and len(_health_df)   > 0 else None,
+                am_mapping            = am_mapping_df          if not am_mapping_df.empty else None,
             )
             print(f"[GSheets] Export completato")
+
+            # ---- Check 6: integrità glovo_products su Sheets ----
+            if quality_report is not None:
+                from pipeline.data_quality import check_sheets_products_integrity
+                check_sheets_products_integrity(
+                    sheets_result  = sheets_result,
+                    expected_rows  = len(glovo_products_sheets),
+                    report         = quality_report,
+                )
+                # Aggiorna pipeline_health su Sheets con il nuovo issue
+                _updated_health = quality_report.to_dataframe()
+                from pipeline.sheets_writer import export_to_sheets as _exp
+                try:
+                    _exp(
+                        spreadsheet_id       = sheets_id,
+                        service_account_info = sheets_sa,
+                        pipeline_health      = _updated_health,
+                    )
+                except Exception as _he:
+                    print(f"[QC] Impossibile aggiornare pipeline_health: {_he}")
 
             # ---- Auto-repair tab falliti ----
             failed_tabs = [t for t, n in sheets_result.items() if n == -1]

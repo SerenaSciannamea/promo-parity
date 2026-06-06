@@ -12,6 +12,7 @@ Output: DataFrame a livello store con:
     city_code, store_name, week_num,
     best_promo_type, best_promo_rank,
     avg_pct_off,          <- media % sconto sui prodotti in promo (quando disponibile)
+    max_pct_off,          <- massima % sconto sui prodotti in promo (usata per parity)
     promo_product_count,  <- n. prodotti distinti in promo
     total_sold,           <- tot pezzi venduti (proxy fatturato)
     revenue,              <- avg_unit_price * total_product_sold (somma)
@@ -86,7 +87,10 @@ def load_glovo_csv(path: str) -> pd.DataFrame:
 
     # Cast numerici
     numeric_cols = ["avg_unit_price", "total_product_sold", "avg_percentage_off",
-                    "quantity_sold_under_promo", "promo_active_days"]
+                    "quantity_sold_under_promo", "promo_active_days",
+                    "min_basket_size_np", "min_basket_size_p",
+                    "quantity_sold_np", "quantity_sold_p",
+                    "pct_store_addresses_impacted"]
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
@@ -118,6 +122,8 @@ def aggregate_store_level(df: pd.DataFrame, prime_mode: bool = False) -> pd.Data
     - best_promo_type: il tipo di promo con rank piu' basso (piu' forte) fra tutti
       i prodotti dello store in quella settimana
     - avg_pct_off: media di avg_percentage_off per i prodotti in PERCENTAGE_DISCOUNT
+    - max_pct_off: massima avg_percentage_off fra i prodotti in PERCENTAGE_DISCOUNT
+                   (usata come metrica principale nella parity, simmetrica con Deliveroo)
     - promo_product_count: n. prodotti distinti con has_active_promo == 'Y'
     - revenue: somma(avg_unit_price * total_product_sold) per tutti i prodotti
     - promo_revenue: revenue dei soli prodotti in promo
@@ -186,6 +192,15 @@ def aggregate_store_level(df: pd.DataFrame, prime_mode: bool = False) -> pd.Data
             & (promo_rows["avg_percentage_off"] > 0)
         ]
         avg_pct = pct_rows["avg_percentage_off"].mean() if len(pct_rows) > 0 else None
+        max_pct = pct_rows["avg_percentage_off"].max() if len(pct_rows) > 0 else None
+
+        # Min basket size per BASKET_PERCENTAGE
+        basket_rows = promo_rows[promo_rows["type_of_promo"] == "BASKET_PERCENTAGE"]
+        min_basket = None
+        if not basket_rows.empty and "min_basket_size_np" in basket_rows.columns:
+            val = pd.to_numeric(basket_rows["min_basket_size_np"], errors="coerce").max()
+            if not pd.isna(val):
+                min_basket = round(float(val), 0)
 
         total_revenue = g["revenue"].sum()
         promo_rev = g["promo_revenue"].sum()
@@ -194,6 +209,8 @@ def aggregate_store_level(df: pd.DataFrame, prime_mode: bool = False) -> pd.Data
             "best_promo_type":      best_row["type_of_promo"] if best_row["row_rank"] < NO_PROMO_RANK else "",
             "best_promo_rank":      best_row["row_rank"],
             "avg_pct_off":          round(avg_pct, 1) if avg_pct is not None else None,
+            "max_pct_off":          round(max_pct, 1) if max_pct is not None else None,
+            "min_basket_size":      min_basket,
             "promo_product_count":  int(promo_rows["product_name"].nunique()),
             "total_sold":           int(g["total_product_sold"].sum()),
             "revenue":              round(total_revenue, 2),
