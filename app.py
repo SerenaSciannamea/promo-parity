@@ -1543,13 +1543,18 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
         disp["promo_coverage_pct"] = pd.to_numeric(disp["promo_coverage_pct"], errors="coerce") \
             .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
 
-    # Colonna Deliveroo % OFF estratta dal testo promo
-    if "deliveroo_promo_text" in disp.columns:
+    # Colonna Deliveroo % OFF — usa quella già presente nel df (dal parity_calculator)
+    # oppure la estrae dal testo promo (fallback per dati vecchi senza la colonna)
+    if "deliveroo_pct_off" not in disp.columns and "deliveroo_promo_text" in disp.columns:
         disp.insert(
             disp.columns.get_loc("deliveroo_promo_text"),
             "deliveroo_pct_off",
             disp["deliveroo_promo_text"].apply(_extract_roo_pct),
         )
+    elif "deliveroo_pct_off" in disp.columns and "deliveroo_promo_text" in disp.columns:
+        # Formatta la colonna già presente
+        disp["deliveroo_pct_off"] = pd.to_numeric(disp["deliveroo_pct_off"], errors="coerce") \
+            .apply(lambda x: f"{x:.1f}%" if pd.notna(x) and x > 0 else "")
 
     # Colonna Deliveroo Items in promo (Full menu per basket)
     if "deliveroo_promo_products" in disp.columns:
