@@ -1872,12 +1872,8 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
                 st.markdown("<span style='background:#F2CC38;color:#161717;padding:4px 12px;border-radius:6px;font-weight:700'>🛵 Glovo</span>", unsafe_allow_html=True)
             st.write("")
             if gp.empty:
-                # Controlla se esistono prodotti per settimane diverse (dati storici non disponibili)
-                _gp_any = load_glovo_products(city_code, sel_store, "")
-                if not _gp_any.empty and _is_cloud_mode():
-                    st.info(f"I prodotti Glovo sono disponibili solo per la settimana corrente ({_gp_any['week_num'].max() if 'week_num' in _gp_any.columns else '—'}). Seleziona la settimana più recente per vederli.")
-                else:
-                    st.info("Dati prodotti Glovo non ancora disponibili. Verranno caricati al prossimo run della pipeline.")
+                # Nessun prodotto in promo per questa settimana/store
+                st.info("Nessun prodotto Glovo in promozione per questo store nella settimana selezionata.")
             else:
                 def _glovo_promo_badge(row):
                     if row.get("has_active_promo", "N") == "Y":
