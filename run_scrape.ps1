@@ -129,6 +129,20 @@ if (Test-Path $rawCsv) {
             }
         }
 
+        # Copia anche il CSV Glovo della settimana archiviata (da data/)
+        $glovoCsvSrc = Join-Path $PSScriptRoot "data\glovo_auto_$fileWeek.csv"
+        if (Test-Path $glovoCsvSrc) {
+            Copy-Item -Path $glovoCsvSrc -Destination (Join-Path $archiveDir "glovo_auto_$fileWeek.csv") -Force
+            Write-Log "  Archiviato: glovo_auto_$fileWeek.csv -> archive/$fileWeek/"
+        }
+
+        # Copia i CSV weekly della settimana archiviata (parity, city, priority, health)
+        $weeklyDir = Join-Path $PSScriptRoot "data\weekly"
+        Get-ChildItem $weeklyDir -Filter "*_$fileWeek.csv" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination (Join-Path $archiveDir $_.Name) -Force
+            Write-Log "  Archiviato: $($_.Name) -> archive/$fileWeek/"
+        }
+
         Write-Log "Archiviazione completata. Lo scraper parte da zero per $currentWeek."
 
     } elseif ($isFriday -and ($fileDay -ne $today)) {
