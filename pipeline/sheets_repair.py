@@ -34,7 +34,7 @@ from pipeline.sheets_writer import (
     _get_client, _write_rows_chunked,
     TAB_STORE_PARITY, TAB_CITY_PARITY,
     TAB_STORE_PARITY_PRIME, TAB_CITY_PARITY_PRIME,
-    TAB_GLOVO_PRODUCTS, TAB_DELIVEROO_PRODUCTS,
+    TAB_GLOVO_PRODUCTS, TAB_GLOVO_PRODUCTS_PRIME, TAB_DELIVEROO_PRODUCTS,
     TAB_STORE_MAPPING, TAB_NEEDS_REVIEW,
     TAB_PRIORITY_ACTIONS, TAB_PIPELINE_HEALTH,
 )
@@ -71,7 +71,11 @@ TAB_SOURCES: dict[str, callable] = {
     TAB_CITY_PARITY_PRIME:  lambda weeks: [
         (f, w) for f, w in _find_weekly_csvs("city_parity_prime") if not weeks or w in weeks
     ],
-    TAB_GLOVO_PRODUCTS:     lambda weeks: [
+    TAB_GLOVO_PRODUCTS:       lambda weeks: [
+        (DATA_DIR / f"glovo_auto_{w}.csv", w)
+        for w in (weeks or []) if (DATA_DIR / f"glovo_auto_{w}.csv").exists()
+    ],
+    TAB_GLOVO_PRODUCTS_PRIME: lambda weeks: [
         (DATA_DIR / f"glovo_auto_{w}.csv", w)
         for w in (weeks or []) if (DATA_DIR / f"glovo_auto_{w}.csv").exists()
     ],
