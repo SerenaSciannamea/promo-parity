@@ -1871,61 +1871,58 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
             else:
                 st.markdown("<span style='background:#F2CC38;color:#161717;padding:4px 12px;border-radius:6px;font-weight:700'>🛵 Glovo</span>", unsafe_allow_html=True)
             st.write("")
+            _glovo_body = st.empty()   # container unico: sostituisce il vecchio render senza ghost
             if gp.empty:
                 # Nessun prodotto in promo per questa settimana/store
-                st.info("Nessun prodotto Glovo in promozione per questo store nella settimana selezionata.")
+                _glovo_body.info("Nessun prodotto Glovo in promozione per questo store nella settimana selezionata.")
             else:
-                def _glovo_promo_badge(row):
-                    if row.get("has_active_promo", "N") == "Y":
-                        t = row.get("type_of_promo", "")
-                        pct = row.get("avg_percentage_off")
-                        basket = row.get("min_basket_size_np")
-                        if t == "BASKET_PERCENTAGE":
-                            label = f"✅ {t} ({pct:.0f}%)" if pct and pct > 0 else f"✅ {t}"
-                            if basket and float(basket) > 0:
-                                label += f" min €{float(basket):.0f}"
-                            return label
-                        if pct and pct > 0:
-                            return f"✅ {t} ({pct:.0f}%)"
-                        return f"✅ {t}" if t else "✅ Promo"
-                    return "—"
+                with _glovo_body.container():
+                    def _glovo_promo_badge(row):
+                        if row.get("has_active_promo", "N") == "Y":
+                            t = row.get("type_of_promo", "")
+                            pct = row.get("avg_percentage_off")
+                            basket = row.get("min_basket_size_np")
+                            if t == "BASKET_PERCENTAGE":
+                                label = f"✅ {t} ({pct:.0f}%)" if pct and pct > 0 else f"✅ {t}"
+                                if basket and float(basket) > 0:
+                                    label += f" min €{float(basket):.0f}"
+                                return label
+                            if pct and pct > 0:
+                                return f"✅ {t} ({pct:.0f}%)"
+                            return f"✅ {t}" if t else "✅ Promo"
+                        return "—"
 
-                disp_g = gp.copy()
-                disp_g["promozione"] = disp_g.apply(_glovo_promo_badge, axis=1)
-                if "avg_unit_price" in disp_g.columns:
-                    disp_g["avg_unit_price"] = pd.to_numeric(disp_g["avg_unit_price"], errors="coerce") \
-                        .apply(lambda x: f"{x:.1f}€" if pd.notna(x) else "")
-                disp_g = disp_g.rename(columns={
-                    "product_name":       "Prodotto",
-                    "avg_unit_price":     "Prezzo €",
-                    "total_product_sold": "Qtà venduta",
-                })
-                show_cols_g = ["Prodotto", "promozione", "Prezzo €", "Qtà venduta"]
-                show_cols_g = [c for c in show_cols_g if c in disp_g.columns]
+                    disp_g = gp.copy()
+                    disp_g["promozione"] = disp_g.apply(_glovo_promo_badge, axis=1)
+                    if "avg_unit_price" in disp_g.columns:
+                        disp_g["avg_unit_price"] = pd.to_numeric(disp_g["avg_unit_price"], errors="coerce") \
+                            .apply(lambda x: f"{x:.1f}€" if pd.notna(x) else "")
+                    disp_g = disp_g.rename(columns={
+                        "product_name":       "Prodotto",
+                        "avg_unit_price":     "Prezzo €",
+                        "total_product_sold": "Qtà venduta",
+                    })
+                    show_cols_g = ["Prodotto", "promozione", "Prezzo €", "Qtà venduta"]
+                    show_cols_g = [c for c in show_cols_g if c in disp_g.columns]
 
-                def _hl_promo_g(row):
-                    bg = "background-color: #fef9c3" if row.get("has_active_promo", "N") == "Y" else ""
-                    return [bg] * len(row)
-
-                if "has_active_promo" in disp_g.columns:
-                    n_promo = (disp_g["has_active_promo"] == "Y").sum()
-                else:
-                    # Fallback: usa glovo_promo_products da store_parity (più affidabile)
-                    try:
-                        n_promo = int(float(latest.get("glovo_promo_products", 0) or 0))
-                    except (ValueError, TypeError):
-                        n_promo = 0
-                st.caption(f"{len(gp)} prodotti · {n_promo} in promozione")
-                _promo_flags_g = _safe_flags(gp, "has_active_promo").reindex(disp_g.index).fillna(False)
-                _g_df = disp_g[show_cols_g]
-                _g_styles = [
-                    "background:#FFF8D0;color:#7a6300" if _promo_flags_g.get(idx, False) else ""
-                    for idx in _g_df.index
-                ]
-                st.markdown(
-                    _products_table_html(_g_df, "#FFC244", "#1a1a1a", _g_styles),
-                    unsafe_allow_html=True,
-                )
+                    if "has_active_promo" in disp_g.columns:
+                        n_promo = (disp_g["has_active_promo"] == "Y").sum()
+                    else:
+                        try:
+                            n_promo = int(float(latest.get("glovo_promo_products", 0) or 0))
+                        except (ValueError, TypeError):
+                            n_promo = 0
+                    st.caption(f"{len(gp)} prodotti · {n_promo} in promozione")
+                    _promo_flags_g = _safe_flags(gp, "has_active_promo").reindex(disp_g.index).fillna(False)
+                    _g_df = disp_g[show_cols_g]
+                    _g_styles = [
+                        "background:#FFF8D0;color:#7a6300" if _promo_flags_g.get(idx, False) else ""
+                        for idx in _g_df.index
+                    ]
+                    st.markdown(
+                        _products_table_html(_g_df, "#FFC244", "#1a1a1a", _g_styles),
+                        unsafe_allow_html=True,
+                    )
 
         # ---- [E] Colonna Prime (solo tab prime) ----
         if prime and col_prime is not None:
