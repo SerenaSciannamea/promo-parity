@@ -463,24 +463,31 @@ def load_am_mapping() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _dedup_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rimuove colonne duplicate ereditabili da merge/Sheets. Applicato a tutti i load pubblici."""
+    if df.columns.duplicated().any():
+        return df.loc[:, ~df.columns.duplicated(keep="first")]
+    return df
+
+
 @st.cache_data(ttl=300)
 def load_store_parity() -> pd.DataFrame:
-    return _cloud_store_parity() if _is_cloud_mode() else _local_store_parity()
+    return _dedup_columns(_cloud_store_parity() if _is_cloud_mode() else _local_store_parity())
 
 
 @st.cache_data(ttl=300)
 def load_city_parity() -> pd.DataFrame:
-    return _cloud_city_parity() if _is_cloud_mode() else _local_city_parity()
+    return _dedup_columns(_cloud_city_parity() if _is_cloud_mode() else _local_city_parity())
 
 
 @st.cache_data(ttl=300)
 def load_store_parity_prime() -> pd.DataFrame:
-    return _cloud_store_parity_prime() if _is_cloud_mode() else _local_store_parity_prime()
+    return _dedup_columns(_cloud_store_parity_prime() if _is_cloud_mode() else _local_store_parity_prime())
 
 
 @st.cache_data(ttl=300)
 def load_city_parity_prime() -> pd.DataFrame:
-    return _cloud_city_parity_prime() if _is_cloud_mode() else _local_city_parity_prime()
+    return _dedup_columns(_cloud_city_parity_prime() if _is_cloud_mode() else _local_city_parity_prime())
 
 
 @st.cache_data(ttl=300)
