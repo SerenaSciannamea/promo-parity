@@ -876,10 +876,15 @@ def sidebar() -> tuple[list[str], list[str]]:
         all_ams = sorted(am_df["sf_registered_am"].dropna().unique())
         all_ams = [a for a in all_ams if a.strip()]
         if all_ams:
+            am_options = ["Tutti"] + all_ams
+            # Recupera la selezione precedente dalla session_state (evita reset ad ogni rerun)
+            prev = st.session_state.get("sel_am_value", "Tutti")
+            default_idx = am_options.index(prev) if prev in am_options else 0
             sel_am = st.sidebar.selectbox(
                 "👤 Responsabile AM",
-                options=["Tutti"] + all_ams,
-                index=0,
+                options=am_options,
+                index=default_idx,
+                key="sel_am_value",
             )
             if sel_am == "Tutti":
                 sel_am = None
