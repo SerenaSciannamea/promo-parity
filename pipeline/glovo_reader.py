@@ -23,7 +23,20 @@ Output: DataFrame a livello store con:
 from __future__ import annotations
 
 import pandas as pd
-from pipeline.promo_ranker import rank_glovo, NO_PROMO_RANK
+from pipeline.promo_ranker import GLOVO_RANK, NO_PROMO_RANK
+
+
+def _strongest_promo_type(type_str: str) -> str:
+    """Tipo di promo piu' forte (rank piu' basso) fra quelli presenti in una
+    stringa eventualmente combinata, es. "PERCENTAGE_DISCOUNT, TWO_FOR_ONE" ->
+    "TWO_FOR_ONE". Stringa vuota se nessun tipo e' riconosciuto."""
+    best_t, best_r = "", NO_PROMO_RANK
+    for segment in str(type_str).split(","):
+        s = segment.strip().upper()
+        r = GLOVO_RANK.get(s, NO_PROMO_RANK)
+        if s and r < best_r:
+            best_r, best_t = r, s
+    return best_t
 
 
 def load_glovo_csv(path: str) -> pd.DataFrame:
@@ -71,19 +84,23 @@ def load_glovo_csv(path: str) -> pd.DataFrame:
             df["type_of_promo"] = df["type_of_promo"].fillna("").str.strip().str.upper()
 
         # avg_percentage_off: usa la % non-prime
-        # Solo per promo che hanno una % significativa (non TWO_FOR_ONE, FREE_DELIVERY)
-        PCT_BASED_TYPES = {"PERCENTAGE_DISCOUNT", "BASKET_PERCENTAGE"}
+        # Solo per promo che hanno una % significativa (non TWO_FOR_ONE, FREE_DELIVERY).
+        # NB: type_of_promo puo' essere una combinazione (es. "PERCENTAGE_DISCOUNT, TWO_FOR_ONE")
+        # quando un prodotto ha piu' promo nella stessa settimana. In quel caso la % off
+        # va comunque mostrata, quindi si verifica se la stringa CONTIENE un tipo basato su %,
+        # invece di pretendere una corrispondenza esatta (che azzerava la % sui combinati).
         if "avg_percentage_off" not in df.columns:
             raw_pct = pd.to_numeric(
                 df.get("percentage_off_np", pd.Series(0, index=df.index)),
                 errors="coerce"
             ).fillna(0)
-            # Azzera la % se il tipo di promo non la usa
-            df["avg_percentage_off"] = raw_pct.where(
-                df.get("type_of_promo", pd.Series("", index=df.index))
-                  .str.upper().isin(PCT_BASED_TYPES),
-                0
+            type_upper = df.get("type_of_promo", pd.Series("", index=df.index)).str.upper()
+            is_pct_based = (
+                type_upper.str.contains("PERCENTAGE_DISCOUNT", na=False)
+                | type_upper.str.contains("BASKET_PERCENTAGE", na=False)
             )
+            # Azzera la % solo se NESSUN tipo di promo basato su % e' presente
+            df["avg_percentage_off"] = raw_pct.where(is_pct_based, 0)
 
     # Cast numerici
     numeric_cols = ["avg_unit_price", "total_product_sold", "avg_percentage_off",
@@ -119,8 +136,9 @@ def aggregate_store_level(df: pd.DataFrame, prime_mode: bool = False) -> pd.Data
                   Utile per calcolare la parity dal punto di vista degli utenti Prime.
 
     Logica:
-    - best_promo_type: il tipo di promo con rank piu' basso (piu' forte) fra tutti
-      i prodotti dello store in quella settimana
+    - best_promo_type: la promo DOMINANTE dello store = quella presente sul maggior
+      numero di prodotti in promo (ogni prodotto contato per la sua promo piu' forte;
+      a parita' di conteggio vince la piu' forte)
     - avg_pct_off: media di avg_percentage_off per i prodotti in PERCENTAGE_DISCOUNT
     - max_pct_off: massima avg_percentage_off fra i prodotti in PERCENTAGE_DISCOUNT
                    (usata come metrica principale nella parity, simmetrica con Deliveroo)
@@ -157,22 +175,19 @@ def aggregate_store_level(df: pd.DataFrame, prime_mode: bool = False) -> pd.Data
 
         # avg_percentage_off: usa % prime se disponibile, altrimenti non-prime
         # Solo per promo che hanno una % significativa
-        PCT_BASED_TYPES_PM = {"PERCENTAGE_DISCOUNT", "BASKET_PERCENTAGE"}
+        # type_of_promo puo' essere combinato: si verifica se CONTIENE un tipo
+        # basato su % invece di pretendere la corrispondenza esatta.
+        def _is_pct_based(t: str) -> bool:
+            return ("PERCENTAGE_DISCOUNT" in t) or ("BASKET_PERCENTAGE" in t)
         if "percentage_off_p" in df.columns:
             def _prime_pct(r):
                 if str(r.get("promotion_prime", "N")).strip().upper() == "Y":
                     t = str(r.get("type_of_promo", "") or "").upper()
-                    return float(r.get("percentage_off_p") or 0) if t in PCT_BASED_TYPES_PM else 0.0
+                    return float(r.get("percentage_off_p") or 0) if _is_pct_based(t) else 0.0
                 else:
                     t = str(r.get("type_of_promo", "") or "").upper()
-                    return float(r.get("avg_percentage_off") or 0) if t in PCT_BASED_TYPES_PM else 0.0
+                    return float(r.get("avg_percentage_off") or 0) if _is_pct_based(t) else 0.0
             df["avg_percentage_off"] = df.apply(_prime_pct, axis=1)
-
-    # Calcola rank riga per riga
-    df["row_rank"] = df.apply(
-        lambda r: rank_glovo(r.get("type_of_promo", ""), r.get("has_active_promo", "N")),
-        axis=1,
-    )
 
     # Revenue per riga
     df["revenue"] = df["avg_unit_price"] * df["total_product_sold"]
@@ -181,14 +196,34 @@ def aggregate_store_level(df: pd.DataFrame, prime_mode: bool = False) -> pd.Data
     group_keys = ["city_code", "store_name", "week_num"]
 
     def agg_store(g: pd.DataFrame) -> pd.Series:
-        best_idx = g["row_rank"].idxmin()
-        best_row = g.loc[best_idx]
-
         promo_rows = g[g["has_active_promo"] == "Y"]
 
-        # % off: media fra i prodotti con PERCENTAGE_DISCOUNT o BASKET_PERCENTAGE
+        # --- Promo DOMINANTE dello store = quella presente sul MAGGIOR numero di
+        # prodotti in promo. Ogni prodotto conta una volta, rappresentato dalla sua
+        # promo piu' forte (es. un prodotto "PERCENTAGE_DISCOUNT, TWO_FOR_ONE" conta
+        # come TWO_FOR_ONE). A parita' di conteggio vince la promo piu' forte (rank
+        # piu' basso). Cosi' uno store con molti prodotti in %off e pochi in 2x1
+        # resta classificato come %off.
+        rep = (promo_rows["type_of_promo"].apply(_strongest_promo_type)
+               if len(promo_rows) > 0 else pd.Series([], dtype=str))
+        rep = rep[rep != ""]
+        if len(rep) > 0:
+            counts    = rep.value_counts()
+            top_n     = counts.max()
+            tied      = [t for t in counts.index if counts[t] == top_n]
+            best_type = min(tied, key=lambda t: GLOVO_RANK.get(t, NO_PROMO_RANK))
+            best_rank = GLOVO_RANK.get(best_type, NO_PROMO_RANK)
+        else:
+            best_type = ""
+            best_rank = NO_PROMO_RANK
+
+        # % off: media fra i prodotti con PERCENTAGE_DISCOUNT o BASKET_PERCENTAGE.
+        # type_of_promo puo' essere combinato (es. "PERCENTAGE_DISCOUNT, TWO_FOR_ONE"):
+        # si verifica se CONTIENE un tipo basato su %, non la corrispondenza esatta.
+        _t = promo_rows["type_of_promo"].str.upper()
         pct_rows = promo_rows[
-            promo_rows["type_of_promo"].isin(["PERCENTAGE_DISCOUNT", "BASKET_PERCENTAGE"])
+            (_t.str.contains("PERCENTAGE_DISCOUNT", na=False)
+             | _t.str.contains("BASKET_PERCENTAGE", na=False))
             & (promo_rows["avg_percentage_off"] > 0)
         ]
         avg_pct = pct_rows["avg_percentage_off"].mean() if len(pct_rows) > 0 else None
@@ -206,8 +241,8 @@ def aggregate_store_level(df: pd.DataFrame, prime_mode: bool = False) -> pd.Data
         promo_rev = g["promo_revenue"].sum()
 
         return pd.Series({
-            "best_promo_type":      best_row["type_of_promo"] if best_row["row_rank"] < NO_PROMO_RANK else "",
-            "best_promo_rank":      best_row["row_rank"],
+            "best_promo_type":      best_type,
+            "best_promo_rank":      best_rank,
             "avg_pct_off":          round(avg_pct, 1) if avg_pct is not None else None,
             "max_pct_off":          round(max_pct, 1) if max_pct is not None else None,
             "min_basket_size":      min_basket,
