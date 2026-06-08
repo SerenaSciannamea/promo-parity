@@ -71,19 +71,23 @@ def load_glovo_csv(path: str) -> pd.DataFrame:
             df["type_of_promo"] = df["type_of_promo"].fillna("").str.strip().str.upper()
 
         # avg_percentage_off: usa la % non-prime
-        # Solo per promo che hanno una % significativa (non TWO_FOR_ONE, FREE_DELIVERY)
-        PCT_BASED_TYPES = {"PERCENTAGE_DISCOUNT", "BASKET_PERCENTAGE"}
+        # Solo per promo che hanno una % significativa (non TWO_FOR_ONE, FREE_DELIVERY).
+        # NB: type_of_promo puo' essere una combinazione (es. "PERCENTAGE_DISCOUNT, TWO_FOR_ONE")
+        # quando un prodotto ha piu' promo nella stessa settimana. In quel caso la % off
+        # va comunque mostrata, quindi si verifica se la stringa CONTIENE un tipo basato su %,
+        # invece di pretendere una corrispondenza esatta (che azzerava la % sui combinati).
         if "avg_percentage_off" not in df.columns:
             raw_pct = pd.to_numeric(
                 df.get("percentage_off_np", pd.Series(0, index=df.index)),
                 errors="coerce"
             ).fillna(0)
-            # Azzera la % se il tipo di promo non la usa
-            df["avg_percentage_off"] = raw_pct.where(
-                df.get("type_of_promo", pd.Series("", index=df.index))
-                  .str.upper().isin(PCT_BASED_TYPES),
-                0
+            type_upper = df.get("type_of_promo", pd.Series("", index=df.index)).str.upper()
+            is_pct_based = (
+                type_upper.str.contains("PERCENTAGE_DISCOUNT", na=False)
+                | type_upper.str.contains("BASKET_PERCENTAGE", na=False)
             )
+            # Azzera la % solo se NESSUN tipo di promo basato su % e' presente
+            df["avg_percentage_off"] = raw_pct.where(is_pct_based, 0)
 
     # Cast numerici
     numeric_cols = ["avg_unit_price", "total_product_sold", "avg_percentage_off",
