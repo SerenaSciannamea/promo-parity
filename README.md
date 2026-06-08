@@ -66,6 +66,8 @@ app.py                      ← Dashboard Streamlit
 | 5.0 | Consegna scontata | `FLAT_DELIVERY` | "consegna a X€" |
 | 6.0 | Nessuna promo | — | — |
 
+**Promo dominante dello store**: è la promo presente sul **maggior numero di prodotti** in promo (ogni prodotto contato per la sua promo più forte secondo la gerarchia sopra; es. un prodotto `TWO_FOR_ONE, PERCENTAGE_DISCOUNT` conta come `TWO_FOR_ONE`). A parità di conteggio vince la più forte → uno store con molti prodotti in %off e pochi in 2×1 resta classificato come `%off`. I prodotti con più promo concorrenti mantengono la loro **% off reale** nel dettaglio prodotto (la 2×1, che non ha sconto %, non abbassa la media).
+
 **Logica parity label** (rank uguale → tiebreaker):
 - **PERCENTAGE_DISCOUNT** (rank 2.0): confronto % MAX; se uguale (±2pp) → tiebreaker su numero prodotti in promo
 - **BASKET_PERCENTAGE** (rank 3.0): Opzione C — se `|basket_diff| ≤ €10` usa solo la %; se `> €10` con segnali contrastanti → PARITY
