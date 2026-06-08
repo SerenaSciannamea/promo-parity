@@ -185,6 +185,30 @@ def read_all(
             needs_review = needs_review[mask_nr]
 
     # -------------------------------------------------------------------------
+    # Applica override manuali a store_parity
+    # Gli store marcati come Esclusiva Glovo o Non su Deliveroo nel mapping
+    # devono risultare EXCLUSIVE_GLOVO in store_parity senza aspettare il
+    # prossimo run della pipeline.
+    # -------------------------------------------------------------------------
+    if not store_parity.empty and not store_mapping.empty and "parity" in store_parity.columns:
+        exclusive_sources = {"manual_rejected", "not_on_deliveroo"}
+        excl_keys = set(
+            zip(
+                store_mapping.loc[store_mapping["source"].isin(exclusive_sources), "city_code"],
+                store_mapping.loc[store_mapping["source"].isin(exclusive_sources), "glovo_name"],
+            )
+        )
+        if excl_keys:
+            mask_excl = store_parity.apply(
+                lambda r: (r.get("city_code", ""), r.get("glovo_name", "")) in excl_keys,
+                axis=1,
+            )
+            store_parity.loc[mask_excl, "parity"] = "EXCLUSIVE_GLOVO"
+            # Pulisci anche deliveroo_name e deliveroo_rank per gli store esclusivi
+            if "deliveroo_name" in store_parity.columns:
+                store_parity.loc[mask_excl, "deliveroo_name"] = ""
+
+    # -------------------------------------------------------------------------
     # Cast numerici
     # -------------------------------------------------------------------------
     for df, num_cols in [
