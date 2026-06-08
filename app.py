@@ -780,9 +780,15 @@ def save_not_on_deliveroo(city: str, glovo_name: str) -> None:
     """Marca lo store come 'Non su Deliveroo' (assente dalla piattaforma, no esclusiva)."""
     from pipeline.store_matcher import mark_not_on_deliveroo
     if _is_cloud_mode():
-        # In cloud mode: salva nel mapping locale e sincronizza su Sheets
-        mark_not_on_deliveroo(city, glovo_name)
-        _sync_mapping_to_sheets()
+        # In cloud mode: append su manual_matches (mai riscrittura del mapping completo)
+        from pipeline.sheets_reader import append_manual_match
+        append_manual_match(
+            _get_sheet_id(),
+            _get_service_account(),
+            {"city_code": city, "glovo_name": glovo_name,
+             "glovo_store_id": "", "deliveroo_name": "",
+             "confidence": "1.0", "source": "manual_not_deliveroo"},
+        )
     else:
         mark_not_on_deliveroo(city, glovo_name)
 
@@ -791,8 +797,15 @@ def save_glovo_exclusive(city: str, glovo_name: str) -> None:
     """Marca lo store come 'Esclusiva Glovo' (accordo commerciale di esclusiva)."""
     from pipeline.store_matcher import mark_glovo_exclusive
     if _is_cloud_mode():
-        mark_glovo_exclusive(city, glovo_name)
-        _sync_mapping_to_sheets()
+        # In cloud mode: append su manual_matches (mai riscrittura del mapping completo)
+        from pipeline.sheets_reader import append_manual_match
+        append_manual_match(
+            _get_sheet_id(),
+            _get_service_account(),
+            {"city_code": city, "glovo_name": glovo_name,
+             "glovo_store_id": "", "deliveroo_name": "",
+             "confidence": "1.0", "source": "manual_rejected"},
+        )
     else:
         mark_glovo_exclusive(city, glovo_name)
 
