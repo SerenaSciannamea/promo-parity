@@ -719,7 +719,13 @@ def load_deliveroo_products(city_code: str, restaurant_name: str, week_num: str 
 # ---------------------------------------------------------------------------
 
 def _sync_mapping_to_sheets() -> None:
-    """Sovrascrive il tab store_mapping su Sheets con il CSV locale aggiornato."""
+    """Sovrascrive il tab store_mapping su Sheets con il CSV locale aggiornato.
+
+    GUARDIA ANTI-WIPE: se il CSV locale ha meno di 100 righe (server cloud
+    senza dati locali), la sovrascrittura viene bloccata per evitare di
+    cancellare migliaia di match già presenti su Sheets.
+    In cloud mode usare sempre append_manual_match invece di questo metodo.
+    """
     import gspread
     from google.oauth2.service_account import Credentials
 
@@ -732,6 +738,15 @@ def _sync_mapping_to_sheets() -> None:
     sheet  = gc.open_by_key(_get_sheet_id())
 
     df = pd.read_csv(ROOT / "data" / "store_mapping.csv", dtype=str).fillna("")
+
+    # GUARDIA: blocca se il CSV locale è quasi vuoto (tipico del server cloud)
+    MIN_ROWS_GUARD = 100
+    if len(df) < MIN_ROWS_GUARD:
+        raise RuntimeError(
+            f"_sync_mapping_to_sheets bloccato: CSV locale ha solo {len(df)} righe "
+            f"(minimo atteso {MIN_ROWS_GUARD}). In cloud mode usare append_manual_match."
+        )
+
     headers = df.columns.tolist()
     rows    = df.values.tolist()
 
