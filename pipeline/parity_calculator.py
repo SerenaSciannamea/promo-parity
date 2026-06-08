@@ -36,21 +36,22 @@ def compute_store_parity(
     glovo_store: pd.DataFrame,
     deliveroo_deduped: pd.DataFrame,
     store_match_map: dict[tuple[str, str], str | None],
-    exclusive_glovo_set: set[tuple[str, str]] | None = None,
+    exclusive_glovo_set:  set[tuple[str, str]] | None = None,
+    not_on_deliveroo_set: set[tuple[str, str]] | None = None,
 ) -> pd.DataFrame:
     """
     Calcola la parity per ogni store Glovo matchato.
 
     Parameters
     ----------
-    glovo_store          : DataFrame aggregato store-level da glovo_reader
-                           (city_code, store_name, week_num, best_promo_rank, ...)
-    deliveroo_deduped    : DataFrame da deliveroo_promo_deduped.csv
-                           (city_code, restaurant_name, promotion_type, scraped_at_utc)
-    store_match_map      : { (city_code, glovo_name) -> deliveroo_name | None }
-    exclusive_glovo_set  : set di (city_code, glovo_name) confermati senza match Deliveroo
-                           (source='manual_rejected'). Ricevono parity='EXCLUSIVE_GLOVO'
-                           invece di 'UNMATCHED'.
+    glovo_store           : DataFrame aggregato store-level da glovo_reader
+    deliveroo_deduped     : DataFrame da deliveroo_promo_deduped.csv
+    store_match_map       : { (city_code, glovo_name) -> deliveroo_name | None }
+    exclusive_glovo_set   : (city_code, glovo_name) con accordo commerciale esclusiva
+                            → parity='EXCLUSIVE_GLOVO'
+    not_on_deliveroo_set  : (city_code, glovo_name) non presenti su Deliveroo per
+                            scelta indipendente del partner
+                            → parity='NOT_ON_DELIVEROO'
 
     Returns
     -------
@@ -101,6 +102,8 @@ def compute_store_parity(
             )
         elif exclusive_glovo_set and (city, glovo_nm) in exclusive_glovo_set:
             parity = "EXCLUSIVE_GLOVO"
+        elif not_on_deliveroo_set and (city, glovo_nm) in not_on_deliveroo_set:
+            parity = "NOT_ON_DELIVEROO"
         else:
             parity = "UNMATCHED"
 
@@ -142,14 +145,15 @@ def compute_city_parity(store_parity: pd.DataFrame) -> pd.DataFrame:
     group_keys = ["city_code", "week_num"]
 
     for (city, week), g in store_parity.groupby(group_keys):
-        unmatched       = g[g["parity"] == "UNMATCHED"]
-        exclusive_glovo = g[g["parity"] == "EXCLUSIVE_GLOVO"]
-        matched         = g[~g["parity"].isin(["UNMATCHED", "EXCLUSIVE_GLOVO"])]
+        unmatched         = g[g["parity"] == "UNMATCHED"]
+        exclusive_glovo   = g[g["parity"] == "EXCLUSIVE_GLOVO"]
+        not_on_deliveroo  = g[g["parity"] == "NOT_ON_DELIVEROO"]
+        matched           = g[~g["parity"].isin(["UNMATCHED", "EXCLUSIVE_GLOVO", "NOT_ON_DELIVEROO"])]
 
-        n_total         = len(g)
-        n_matched       = len(matched)
-        n_unmatched     = len(unmatched)
-        n_exclusive_glovo = len(exclusive_glovo)
+        n_total           = len(g)
+        n_matched         = len(matched)
+        n_unmatched       = len(unmatched)
+        n_exclusive_glovo = len(exclusive_glovo) + len(not_on_deliveroo)  # aggregati per compatibilità
         n_sup  = int((matched["parity"] == "SUPERIORITY").sum())
         n_par  = int((matched["parity"] == "PARITY").sum())
         n_inf  = int((matched["parity"] == "INFERIORITY").sum())

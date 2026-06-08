@@ -191,22 +191,34 @@ def read_all(
     # prossimo run della pipeline.
     # -------------------------------------------------------------------------
     if not store_parity.empty and not store_mapping.empty and "parity" in store_parity.columns:
-        exclusive_sources = {"manual_rejected", "not_on_deliveroo"}
+        # Esclusiva Glovo (accordo commerciale) → EXCLUSIVE_GLOVO
         excl_keys = set(
             zip(
-                store_mapping.loc[store_mapping["source"].isin(exclusive_sources), "city_code"],
-                store_mapping.loc[store_mapping["source"].isin(exclusive_sources), "glovo_name"],
+                store_mapping.loc[store_mapping["source"] == "manual_rejected", "city_code"],
+                store_mapping.loc[store_mapping["source"] == "manual_rejected", "glovo_name"],
+            )
+        )
+        # Non su Deliveroo (scelta indipendente del partner) → NOT_ON_DELIVEROO
+        not_deliv_keys = set(
+            zip(
+                store_mapping.loc[store_mapping["source"] == "not_on_deliveroo", "city_code"],
+                store_mapping.loc[store_mapping["source"] == "not_on_deliveroo", "glovo_name"],
             )
         )
         if excl_keys:
             mask_excl = store_parity.apply(
-                lambda r: (r.get("city_code", ""), r.get("glovo_name", "")) in excl_keys,
-                axis=1,
+                lambda r: (r.get("city_code", ""), r.get("glovo_name", "")) in excl_keys, axis=1,
             )
             store_parity.loc[mask_excl, "parity"] = "EXCLUSIVE_GLOVO"
-            # Pulisci anche deliveroo_name e deliveroo_rank per gli store esclusivi
             if "deliveroo_name" in store_parity.columns:
                 store_parity.loc[mask_excl, "deliveroo_name"] = ""
+        if not_deliv_keys:
+            mask_nd = store_parity.apply(
+                lambda r: (r.get("city_code", ""), r.get("glovo_name", "")) in not_deliv_keys, axis=1,
+            )
+            store_parity.loc[mask_nd, "parity"] = "NOT_ON_DELIVEROO"
+            if "deliveroo_name" in store_parity.columns:
+                store_parity.loc[mask_nd, "deliveroo_name"] = ""
 
     # -------------------------------------------------------------------------
     # Cast numerici
