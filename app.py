@@ -1619,6 +1619,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
     ]
     available = [c for c in display_cols if c in df_sorted.columns]
     disp = df_sorted[available].copy()
+    disp = _dedup_columns(disp)   # guardia locale: header Sheets corrotti o cache stale
 
     # [C] Badge Prime Boost — colonna aggiuntiva quando prime=True
     if prime:
@@ -1675,6 +1676,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
 
     # Colonna Deliveroo % OFF — usa quella già presente nel df (dal parity_calculator)
     # oppure la estrae dal testo promo (fallback per dati vecchi senza la colonna)
+    disp = _dedup_columns(disp)   # seconda guardia prima degli insert/assign critici
     if "deliveroo_pct_off" not in disp.columns and "deliveroo_promo_text" in disp.columns:
         disp.insert(
             disp.columns.get_loc("deliveroo_promo_text"),
