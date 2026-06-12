@@ -1623,11 +1623,17 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
         rank = str(row.get("deliveroo_rank_label", "")).lower()
         promo_text = str(row.get("deliveroo_promo_text", "")).lower()
         count = row.get("deliveroo_promo_products", 0)
-        # Basket = sconto su tutto l'ordine, non su singoli prodotti
+        try:
+            n = int(count)
+        except (TypeError, ValueError):
+            n = 0
+        # Su Deliveroo una promo con spesa minima può applicarsi a prodotti SPECIFICI
+        # (non a tutto il menu): se lo scraper ha trovato prodotti in promo, mostra il loro numero.
+        if n > 0:
+            return str(n)
+        # Nessun prodotto specifico → sconto sull'intero ordine (basket / spesa minima)
         if "basket" in rank or "spendi" in promo_text or "ordine" in promo_text:
             return "Full menu"
-        if count and int(count) > 0:
-            return str(int(count))
         return ""
 
     # Tabella principale
