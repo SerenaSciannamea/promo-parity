@@ -18,6 +18,9 @@ $scrapeLog = Join-Path $PSScriptRoot "data\scraper_log.txt"
 
 New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot "data") | Out-Null
 
+# Output Python NON bufferizzato -> le righe di avanzamento finiscono nel log in tempo reale
+$env:PYTHONUNBUFFERED = "1"
+
 # ---------------------------------------------------------------------------
 # -Fresh: cancella tutti i file di output e riparte da zero
 # ---------------------------------------------------------------------------
@@ -199,7 +202,7 @@ $null = $paramList.Add("1")
 $null = $paramList.Add("--max-points-per-city")
 $null = $paramList.Add("$MaxPointsPerCity")
 $null = $paramList.Add("--skip-city-after-same-results")
-$null = $paramList.Add("5")
+$null = $paramList.Add("3")
 
 if ($Cities -ne "") {
     $null = $paramList.Add("--city-codes")
@@ -253,9 +256,12 @@ while ($scrapeExit -ne 0 -and $scrapeExit -ne 2 -and $attempt -lt $maxRetries) {
     }
     $attempt++
 
-    # Avvia lo scraper (blocca fino all'uscita, come nella versione originale)
+    # Avvia lo scraper (blocca fino all'uscita). L'output viene mostrato a video
+    # E accodato in tempo reale a scraper_log.txt, cosi' l'avanzamento e' sempre
+    # monitorabile dal log anche senza la finestra aperta.
+    # NB: Tee-Object e' un cmdlet -> $LASTEXITCODE resta quello di python.
     Push-Location $PSScriptRoot
-    & $python $paramList.ToArray()
+    & $python $paramList.ToArray() 2>&1 | Tee-Object -FilePath $scrapeLog -Append
     $scrapeExit = $LASTEXITCODE
     Pop-Location
 }
