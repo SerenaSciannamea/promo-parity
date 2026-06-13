@@ -289,7 +289,8 @@ def export_to_sheets(
             print(f"[sheets_writer] ERRORE {tab_name}: {exc}")
 
     _write(TAB_STORE_PARITY, store_parity,
-           key_cols=["city_code", "glovo_name", "week_num"])
+           key_cols=["city_code", "glovo_name", "week_num"],
+           partition_cols=["week_num"], max_weeks=0)  # replace-by-week: niente residui (es. NOT_ON_GLOVO che diventa matchato), nessun pruning
 
     _write(TAB_CITY_PARITY, city_parity,
            key_cols=["city_code", "week_num"])
@@ -311,7 +312,8 @@ def export_to_sheets(
                        "product_description", "product_price", "promotion_type"])
 
     _write(TAB_STORE_PARITY_PRIME, store_parity_prime,
-           key_cols=["city_code", "glovo_name", "week_num"])
+           key_cols=["city_code", "glovo_name", "week_num"],
+           partition_cols=["week_num"], max_weeks=0)  # replace-by-week: niente residui
 
     _write(TAB_CITY_PARITY_PRIME, city_parity_prime,
            key_cols=["city_code", "week_num"])

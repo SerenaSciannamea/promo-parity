@@ -489,6 +489,15 @@ def run_pipeline(
     # ---- Salva nel DB ----
     conn = get_connection(db_path)
     init_db(conn)
+    # Replace-by-week per store_parity/_prime: cancella le righe della settimana prima
+    # di reinserirle, cosi' un ri-run non lascia residui. Serve perche' un NOT_ON_GLOVO
+    # che diventa matchato ha chiave (glovo_name) diversa e non verrebbe sovrascritto
+    # dal solo upsert -> resterebbe come duplicato stantio.
+    for _tbl, _df in (("store_parity", store_parity), ("store_parity_prime", store_parity_prime)):
+        if _df is not None and not _df.empty and "week_num" in _df.columns:
+            for _wk in _df["week_num"].dropna().astype(str).unique():
+                conn.execute(f"DELETE FROM {_tbl} WHERE week_num = ?", (_wk,))
+    conn.commit()
     n1 = upsert_df(conn, "store_parity",         store_parity)
     n2 = upsert_df(conn, "city_parity",          city_parity)
     n3 = upsert_df(conn, "glovo_products",       glovo_products)
