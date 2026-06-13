@@ -65,8 +65,9 @@ PARITY_COLORS = {
     "UNMATCHED":         "#94a3b8",   # grigio
     "EXCLUSIVE_GLOVO":   "#8b5cf6",   # viola — accordo commerciale esclusiva
     "NOT_ON_DELIVEROO":  "#f97316",   # arancione — scelta indipendente del partner
+    "NOT_ON_GLOVO":      "#0ea5e9",   # azzurro — solo su Deliveroo, non presente su Glovo
 }
-PARITY_ORDER = ["SUPERIORITY", "PARITY", "INFERIORITY", "UNMATCHED", "EXCLUSIVE_GLOVO", "NOT_ON_DELIVEROO"]
+PARITY_ORDER = ["SUPERIORITY", "PARITY", "INFERIORITY", "UNMATCHED", "EXCLUSIVE_GLOVO", "NOT_ON_DELIVEROO", "NOT_ON_GLOVO"]
 
 
 def _col_config_from_data(
@@ -856,9 +857,10 @@ def clear_cache():
 
 def parity_badge(label: str) -> str:
     icons  = {"SUPERIORITY": "🟢", "PARITY": "🟡", "INFERIORITY": "🔴", "UNMATCHED": "⚪",
-              "EXCLUSIVE_GLOVO": "🟣", "NOT_ON_DELIVEROO": "🟠"}
+              "EXCLUSIVE_GLOVO": "🟣", "NOT_ON_DELIVEROO": "🟠", "NOT_ON_GLOVO": "🔵"}
     colors = {"SUPERIORITY": "#00A082", "PARITY": "#b8960a", "INFERIORITY": "#ef4444",
-              "UNMATCHED": "#94a3b8", "EXCLUSIVE_GLOVO": "#7c3aed", "NOT_ON_DELIVEROO": "#ea580c"}
+              "UNMATCHED": "#94a3b8", "EXCLUSIVE_GLOVO": "#7c3aed", "NOT_ON_DELIVEROO": "#ea580c",
+              "NOT_ON_GLOVO": "#0284c7"}
     c = colors.get(label, "")
     style = f"color:{c};font-weight:600" if c else ""
     display = {
@@ -868,6 +870,7 @@ def parity_badge(label: str) -> str:
         "UNMATCHED":       "UNMATCHED",
         "EXCLUSIVE_GLOVO": "Exclusive Glovo",
         "NOT_ON_DELIVEROO": "Non su Deliveroo",
+        "NOT_ON_GLOVO": "Non su Glovo",
     }
     return f"{icons.get(label, '')} {display.get(label, label)}"
 
@@ -945,7 +948,7 @@ def _recompute_city_from_stores(store_df: pd.DataFrame) -> pd.DataFrame:
     Usato quando il filtro AM è attivo per avere metriche city-level corrette."""
     rows = []
     for (city, week), g in store_df.groupby(["city_code", "week_num"]):
-        matched = g[~g["parity"].isin(["UNMATCHED", "EXCLUSIVE_GLOVO", "NOT_ON_DELIVEROO"])]
+        matched = g[~g["parity"].isin(["UNMATCHED", "EXCLUSIVE_GLOVO", "NOT_ON_DELIVEROO", "NOT_ON_GLOVO"])]
         n_total   = len(g)
         n_matched = len(matched)
         if n_matched == 0:
@@ -1242,7 +1245,7 @@ def tab_city_parity(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
 
             if not _dd.empty:
                 # Filtro per direzione del cambio
-                _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3, "EXCLUSIVE_GLOVO": 4, "NOT_ON_DELIVEROO": 5}
+                _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3, "EXCLUSIVE_GLOVO": 4, "NOT_ON_DELIVEROO": 5, "NOT_ON_GLOVO": 6}
                 _dd["_std_rank"]   = _dd["standard_parity"].map(_parity_rank).fillna(9)
                 _dd["_prime_rank"] = _dd["prime_parity"].map(_parity_rank).fillna(9)
                 _dd["direzione"] = _dd.apply(
@@ -1348,6 +1351,7 @@ _SD_PARITY_BG = {
     "UNMATCHED":        "#f1f5f9",
     "EXCLUSIVE_GLOVO":  "#ede9fe",
     "NOT_ON_DELIVEROO": "#fff7ed",
+    "NOT_ON_GLOVO":     "#e0f2fe",
 }
 _SD_PARITY_FG = {
     "SUPERIORITY":      "#00614e",
@@ -1356,6 +1360,7 @@ _SD_PARITY_FG = {
     "UNMATCHED":        "#475569",
     "EXCLUSIVE_GLOVO":  "#5b21b6",
     "NOT_ON_DELIVEROO": "#c2410c",
+    "NOT_ON_GLOVO":     "#075985",
 }
 
 
@@ -1648,9 +1653,13 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
     disp = df_sorted[available].copy()
     disp = _dedup_columns(disp)   # guardia locale: header Sheets corrotti o cache stale
 
+    # NOT_ON_GLOVO = store presente solo su Deliveroo → nessun negozio Glovo da mostrare
+    if "parity" in disp.columns and "glovo_name" in disp.columns:
+        disp.loc[disp["parity"] == "NOT_ON_GLOVO", "glovo_name"] = "—"
+
     # [C] Badge Prime Boost — colonna aggiuntiva quando prime=True
     if prime:
-        _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3, "EXCLUSIVE_GLOVO": 4, "NOT_ON_DELIVEROO": 5}
+        _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3, "EXCLUSIVE_GLOVO": 4, "NOT_ON_DELIVEROO": 5, "NOT_ON_GLOVO": 6}
         _std_df = load_store_parity()
         if not _std_df.empty and sel_weeks:
             _std_filtered = _std_df[_std_df["week_num"].isin(sel_weeks)]
@@ -1796,7 +1805,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
 
         # [C] Badge confronto Standard vs Prime nel drill-down
         if prime and _std_latest is not None:
-            _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3, "EXCLUSIVE_GLOVO": 4, "NOT_ON_DELIVEROO": 5}
+            _parity_rank = {"SUPERIORITY": 0, "PARITY": 1, "INFERIORITY": 2, "UNMATCHED": 3, "EXCLUSIVE_GLOVO": 4, "NOT_ON_DELIVEROO": 5, "NOT_ON_GLOVO": 6}
             _std_p   = str(_std_latest.get("parity", ""))
             _prime_p = str(latest.get("parity", ""))
             _sr = _parity_rank.get(_std_p, 9)
@@ -2321,7 +2330,7 @@ def tab_trend(sel_weeks, sel_cities, sel_am=None):
         s_latest   = store_full[store_full["week_num"] == latest_wk].copy()
         if sel_cities:
             s_latest = s_latest[s_latest["city_code"].isin(sel_cities)]
-        matched_s  = s_latest[~s_latest["parity"].isin(["UNMATCHED", "EXCLUSIVE_GLOVO", "NOT_ON_DELIVEROO"])]
+        matched_s  = s_latest[~s_latest["parity"].isin(["UNMATCHED", "EXCLUSIVE_GLOVO", "NOT_ON_DELIVEROO", "NOT_ON_GLOVO"])]
 
         col_g8, col_d8 = st.columns(2)
 

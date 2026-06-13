@@ -128,6 +128,59 @@ def compute_store_parity(
             "promo_coverage_pct":   float(row.get("promo_coverage_pct", 0)),
         })
 
+    # -----------------------------------------------------------------------
+    # NOT_ON_GLOVO: ristoranti Deliveroo (con promo) che nessun Glovo aggancia.
+    # Lo scraper salva solo i Deliveroo CON promo, quindi questi sono i "Deliveroo-only".
+    # store_parity e' Glovo-centrico: per la chiave UNIQUE(city, glovo_name, week)
+    # riusiamo il nome Deliveroo come glovo_name (in app la colonna Glovo -> "—").
+    # -----------------------------------------------------------------------
+    matched_deliveroo = {
+        (c, str(dn).strip().lower())
+        for (c, _gn), dn in store_match_map.items()
+        if dn and str(dn).strip()
+    }
+    week_nog = ""
+    if "week_num" in glovo_store.columns and len(glovo_store):
+        _wk = glovo_store["week_num"].dropna()
+        if len(_wk):
+            week_nog = str(_wk.iloc[0]).strip()
+
+    if deliveroo_deduped is not None and len(deliveroo_deduped) > 0:
+        seen_nog: set[tuple[str, str]] = set()
+        for _, drow in deliveroo_deduped.iterrows():
+            city  = str(drow.get("city_code", "")).strip()
+            name  = str(drow.get("restaurant_name", "")).strip()
+            promo = str(drow.get("promotion_type", "")).strip()
+            if not city or not name or not promo:
+                continue
+            key = (city, name.lower())
+            if key in matched_deliveroo or key in seen_nog:
+                continue
+            seen_nog.add(key)
+            d_rank = rank_deliveroo(promo)
+            d_pct  = extract_pct_deliveroo(promo)
+            d_bask = extract_min_basket_deliveroo(promo)
+            rows.append({
+                "city_code":            city,
+                "glovo_name":           name,   # chiave: nessun Glovo reale → in app "—"
+                "deliveroo_name":       name,
+                "week_num":             week_nog,
+                "glovo_promo_type":     "",
+                "glovo_rank":           NO_PROMO_RANK,
+                "glovo_rank_label":     "",
+                "deliveroo_promo_text": promo,
+                "deliveroo_rank":       d_rank,
+                "deliveroo_rank_label": rank_label(d_rank),
+                "parity":               "NOT_ON_GLOVO",
+                "glovo_pct_off":        None,
+                "glovo_min_basket":     None,
+                "deliveroo_pct_off":    round(d_pct, 1) if d_pct else None,
+                "deliveroo_min_basket": round(d_bask, 1) if d_bask else None,
+                "glovo_promo_products": 0,
+                "revenue":              0.0,
+                "promo_coverage_pct":   0.0,
+            })
+
     return pd.DataFrame(rows)
 
 
@@ -144,7 +197,11 @@ def compute_city_parity(store_parity: pd.DataFrame) -> pd.DataFrame:
 
     group_keys = ["city_code", "week_num"]
 
-    for (city, week), g in store_parity.groupby(group_keys):
+    for (city, week), g_all in store_parity.groupby(group_keys):
+        # NOT_ON_GLOVO = Deliveroo-only: esclusi dalle metriche Glovo-centriche della citta'
+        g = g_all[g_all["parity"] != "NOT_ON_GLOVO"]
+        if g.empty:
+            continue
         unmatched         = g[g["parity"] == "UNMATCHED"]
         exclusive_glovo   = g[g["parity"] == "EXCLUSIVE_GLOVO"]
         not_on_deliveroo  = g[g["parity"] == "NOT_ON_DELIVEROO"]
