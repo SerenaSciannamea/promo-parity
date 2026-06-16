@@ -257,11 +257,15 @@ while ($scrapeExit -ne 0 -and $scrapeExit -ne 2 -and $attempt -lt $maxRetries) {
     $attempt++
 
     # Avvia lo scraper (blocca fino all'uscita). L'output viene mostrato a video
-    # E accodato in tempo reale a scraper_log.txt, cosi' l'avanzamento e' sempre
-    # monitorabile dal log anche senza la finestra aperta.
-    # NB: Tee-Object e' un cmdlet -> $LASTEXITCODE resta quello di python.
+    # E accodato in tempo reale a scraper_log.txt in UTF-8 (Tee-Object di PS 5.1
+    # scriverebbe in UTF-16 -> log a encoding misto). Cosi' il log resta sempre
+    # pulito e leggibile. ForEach-Object e' un cmdlet -> $LASTEXITCODE = quello di python.
     Push-Location $PSScriptRoot
-    & $python $paramList.ToArray() 2>&1 | Tee-Object -FilePath $scrapeLog -Append
+    & $python $paramList.ToArray() 2>&1 | ForEach-Object {
+        $line = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { "$_" }
+        Write-Host $line
+        Add-Content -Path $scrapeLog -Value $line -Encoding UTF8
+    }
     $scrapeExit = $LASTEXITCODE
     Pop-Location
 }
