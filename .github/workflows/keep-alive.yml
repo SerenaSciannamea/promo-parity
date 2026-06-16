@@ -1,28 +1,27 @@
 name: keep-alive
 
-# Tiene sveglia l'app Streamlit Community Cloud con un ping periodico.
-# Streamlit mette in standby le app dopo un periodo senza traffico: questo
-# ping genera traffico e resetta il timer di inattivita'.
-# NB: GitHub disabilita i workflow schedulati dopo 60 giorni di repo INATTIVO
-#     (nessun commit). Finche' si committa con regolarita', resta attivo.
+# Tiene sveglia l'app Streamlit Community Cloud.
+# NB: un semplice ping HTTP NON basta (Streamlit dorme in base alle sessioni
+# reali). Qui carichiamo l'app con un browser headless (Playwright), che apre
+# una vera sessione e clicca il bottone di wake-up se l'app e' addormentata.
+# GitHub disabilita i workflow schedulati dopo 60 giorni di repo senza commit.
 
 on:
   schedule:
-    - cron: "0 */3 * * *"   # ogni 3 ore
+    - cron: "0 */4 * * *"   # ogni 4 ore
   workflow_dispatch:          # avvio manuale dalla tab Actions
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Streamlit app
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Playwright
         run: |
-          URL="https://promo-parity.streamlit.app/"
-          echo "Ping $URL"
-          for i in 1 2 3; do
-            code=$(curl -sSL --max-time 90 -o /dev/null -w "%{http_code}" "$URL" || echo "000")
-            echo "Tentativo $i -> HTTP $code"
-            [ "$code" = "200" ] && exit 0
-            sleep 30
-          done
-          echo "Nessun 200 dopo 3 tentativi (l'app potrebbe essere in fase di wake-up). Non fallisco: l'obiettivo e' generare traffico."
+          pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+      - name: Visit app (wake if asleep, keep session alive)
+        run: python .github/keep_alive.py
