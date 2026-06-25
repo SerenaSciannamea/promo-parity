@@ -53,7 +53,7 @@ _DELIVEROO_PATTERNS: list[tuple[float, re.Pattern]] = [
     (1.0, re.compile(r"2\s*al\s*prezzo\s*di\s*1|2x1|due\s+al\s+prezzo", re.I)),
     (2.0, re.compile(r"\d+\s*%\s*(di\s*)?sconto|prodotti\s*selezionati|fino\s*al\s*\d+\s*%", re.I)),
     (2.5, re.compile(r"sconto\s*fisso|prezzo\s*speciale|\d+[,\.]\d+\s*€\s*di\s*sconto", re.I)),
-    (3.0, re.compile(r"spendi\s*(almeno|min|da)\s*[\d,\.]+|basket\s*%", re.I)),
+    (3.0, re.compile(r"spendi\s*(almeno|min|da)?\s*[\d,\.]+|basket\s*%|spend[io]\s*\d+\s*€?\s*(per|ottieni|e\s*ottieni)", re.I)),
     (4.0, re.compile(r"consegna\s*grat(is|uita)|free\s*delivery|spedizione\s*grat", re.I)),
     (5.0, re.compile(r"consegna\s*a\s*[\d,\.]+\s*€|flat\s*delivery|\d+[,\.]\d+\s*€\s*(di\s*)?consegna", re.I)),
 ]
