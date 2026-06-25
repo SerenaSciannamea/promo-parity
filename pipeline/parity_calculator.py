@@ -32,10 +32,15 @@ from pipeline.promo_ranker import rank_deliveroo, parity_label, rank_label, NO_P
 # Store-level parity
 # ---------------------------------------------------------------------------
 
+# Severita' della parity dal punto di vista di Glovo (0 = peggiore).
+# Usata per scegliere il concorrente Deliveroo piu' aggressivo nei match 1:N.
+_PARITY_SEVERITY = {"INFERIORITY": 0, "PARITY": 1, "SUPERIORITY": 2}
+
+
 def compute_store_parity(
     glovo_store: pd.DataFrame,
     deliveroo_deduped: pd.DataFrame,
-    store_match_map: dict[tuple[str, str], str | None],
+    store_match_map: dict[tuple[str, str], list[str] | str | None],
     exclusive_glovo_set:  set[tuple[str, str]] | None = None,
     not_on_deliveroo_set: set[tuple[str, str]] | None = None,
 ) -> pd.DataFrame:
@@ -46,7 +51,10 @@ def compute_store_parity(
     ----------
     glovo_store           : DataFrame aggregato store-level da glovo_reader
     deliveroo_deduped     : DataFrame da deliveroo_promo_deduped.csv
-    store_match_map       : { (city_code, glovo_name) -> deliveroo_name | None }
+    store_match_map       : { (city_code, glovo_name) -> [deliveroo_name, ...] }
+                            (matching 1:N; accetta anche una stringa singola per
+                            retro-compatibilita'. Se >1 filiale, la parity usa il
+                            concorrente Deliveroo piu' aggressivo.)
     exclusive_glovo_set   : (city_code, glovo_name) con accordo commerciale esclusiva
                             → parity='EXCLUSIVE_GLOVO'
     not_on_deliveroo_set  : (city_code, glovo_name) non presenti su Deliveroo per
@@ -75,31 +83,49 @@ def compute_store_parity(
         glovo_rank  = float(row["best_promo_rank"])
         glovo_type  = str(row.get("best_promo_type", "")).strip()
 
-        # Cerca il match Deliveroo
-        deliveroo_nm   = store_match_map.get((city, glovo_nm))
-        deliveroo_promo = None
-        deliveroo_rank  = NO_PROMO_RANK
-
-        if deliveroo_nm:
-            deliveroo_promo = deliv_index.get((city, deliveroo_nm.lower()))
-            if deliveroo_promo is not None:
-                deliveroo_rank = rank_deliveroo(deliveroo_promo)
-
-        deliveroo_pct        = extract_pct_deliveroo(deliveroo_promo) if deliveroo_promo else 0.0
-        deliveroo_min_basket = extract_min_basket_deliveroo(deliveroo_promo) if deliveroo_promo else 0.0
         glovo_pct            = float(row.get("max_pct_off") or row.get("avg_pct_off") or 0)
         glovo_promo_products = int(row.get("promo_product_count") or 0)
         glovo_min_basket     = float(row.get("min_basket_size") or 0)
 
-        if deliveroo_nm:
-            parity = parity_label(
-                glovo_rank, deliveroo_rank,
-                glovo_pct_off=glovo_pct,
-                deliveroo_pct_off=deliveroo_pct,
-                glovo_promo_products=glovo_promo_products,
-                glovo_min_basket=glovo_min_basket,
-                deliveroo_min_basket=deliveroo_min_basket,
-            )
+        # Match Deliveroo: puo' essere 1:N (stessa insegna a indirizzi diversi).
+        # Le filiali dovrebbero avere la stessa promo; se differiscono confrontiamo
+        # Glovo col concorrente PIU' AGGRESSIVO (peggior parity per Glovo) per non
+        # nascondere una INFERIORITY.
+        match_val = store_match_map.get((city, glovo_nm))
+        if isinstance(match_val, str):
+            deliveroo_names = [match_val] if match_val.strip() else []
+        else:
+            deliveroo_names = [str(n).strip() for n in (match_val or []) if str(n).strip()]
+
+        deliveroo_nm         = ""
+        deliveroo_promo      = None
+        deliveroo_rank       = NO_PROMO_RANK
+        deliveroo_pct        = 0.0
+        deliveroo_min_basket = 0.0
+
+        if deliveroo_names:
+            best = None  # tieni la filiale che da' la parity peggiore per Glovo
+            for dn in deliveroo_names:
+                b_promo = deliv_index.get((city, dn.lower()))
+                b_rank  = rank_deliveroo(b_promo) if b_promo is not None else NO_PROMO_RANK
+                b_pct   = extract_pct_deliveroo(b_promo) if b_promo else 0.0
+                b_bask  = extract_min_basket_deliveroo(b_promo) if b_promo else 0.0
+                b_par   = parity_label(
+                    glovo_rank, b_rank,
+                    glovo_pct_off=glovo_pct,
+                    deliveroo_pct_off=b_pct,
+                    glovo_promo_products=glovo_promo_products,
+                    glovo_min_basket=glovo_min_basket,
+                    deliveroo_min_basket=b_bask,
+                )
+                # ordina: peggior parity (INFERIORITY<PARITY<SUPERIORITY), poi promo
+                # Deliveroo piu' forte (rank minore, pct maggiore)
+                sev = _PARITY_SEVERITY.get(b_par, 2)
+                sort_key = (sev, b_rank, -b_pct, dn)
+                if best is None or sort_key < best[0]:
+                    best = (sort_key, dn, b_promo, b_rank, b_pct, b_bask, b_par)
+            (_, deliveroo_nm, deliveroo_promo, deliveroo_rank,
+             deliveroo_pct, deliveroo_min_basket, parity) = best
         elif exclusive_glovo_set and (city, glovo_nm) in exclusive_glovo_set:
             parity = "EXCLUSIVE_GLOVO"
         elif not_on_deliveroo_set and (city, glovo_nm) in not_on_deliveroo_set:
@@ -134,11 +160,12 @@ def compute_store_parity(
     # store_parity e' Glovo-centrico: per la chiave UNIQUE(city, glovo_name, week)
     # riusiamo il nome Deliveroo come glovo_name (in app la colonna Glovo -> "—").
     # -----------------------------------------------------------------------
-    matched_deliveroo = {
-        (c, str(dn).strip().lower())
-        for (c, _gn), dn in store_match_map.items()
-        if dn and str(dn).strip()
-    }
+    matched_deliveroo = set()
+    for (c, _gn), dns in store_match_map.items():
+        _names = [dns] if isinstance(dns, str) else (dns or [])
+        for dn in _names:
+            if dn and str(dn).strip():
+                matched_deliveroo.add((c, str(dn).strip().lower()))
     week_nog = ""
     if "week_num" in glovo_store.columns and len(glovo_store):
         _wk = glovo_store["week_num"].dropna()

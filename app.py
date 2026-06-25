@@ -789,6 +789,32 @@ def save_confirmed_match(city: str, glovo_name: str, deliveroo_name: str) -> Non
             reject_match(city, glovo_name)
 
 
+def save_confirmed_matches(city: str, glovo_name: str, deliveroo_names: list[str]) -> None:
+    """
+    Aggiunge UNO o PIU' match Deliveroo a uno store Glovo (matching 1:N).
+    Additivo: non rimuove eventuali match gia' presenti per lo stesso Glovo.
+    """
+    names = [str(n).strip() for n in deliveroo_names if str(n).strip()]
+    # dedup mantenendo l'ordine
+    seen: set[str] = set()
+    names = [n for n in names if not (n in seen or seen.add(n))]
+    if not names:
+        return
+    if _is_cloud_mode():
+        from pipeline.sheets_reader import append_manual_match
+        for nm in names:
+            append_manual_match(
+                _get_sheet_id(),
+                _get_service_account(),
+                {"city_code": city, "glovo_name": glovo_name, "glovo_store_id": "",
+                 "deliveroo_name": nm, "confidence": "1.0", "source": "manual_cloud"},
+            )
+    else:
+        from pipeline.store_matcher import confirm_match
+        for nm in names:
+            confirm_match(city, glovo_name, nm)
+
+
 def save_rejected_match(city: str, glovo_name: str) -> None:
     save_confirmed_match(city, glovo_name, "")
 
@@ -2474,28 +2500,28 @@ def tab_store_matching():
 
             col_match, col_btn = st.columns([3, 2])
             with col_match:
-                # Lista + testo libero
-                city_opts   = deliv_names.get(sel_city_store, [])
+                # Multiselect (1:N) + testo libero per nomi non in lista
+                city_opts = deliv_names.get(sel_city_store, [])
+                sel_delivs = st.multiselect(
+                    "Nomi Deliveroo (puoi sceglierne più di uno)",
+                    options=city_opts,
+                    key="unm_deliv_multi",
+                    help="Stessa insegna a indirizzi diversi → selezionane più di una. "
+                         "La parity userà il concorrente più aggressivo.",
+                )
                 deliv_input = st.text_input(
-                    "Nome Deliveroo",
-                    placeholder="Scrivi il nome esatto su Deliveroo…",
+                    "…o aggiungi un nome non presente in lista",
+                    placeholder="Nome esatto su Deliveroo…",
                     key="unm_deliv_text"
                 )
-                if city_opts:
-                    deliv_list = st.selectbox(
-                        "…oppure scegli dalla lista scrappata",
-                        options=["— scegli —"] + city_opts,
-                        key="unm_deliv_list"
-                    )
-                    final_deliv = deliv_input.strip() or (
-                        "" if deliv_list == "— scegli —" else deliv_list
-                    )
-                else:
-                    final_deliv = deliv_input.strip()
+                all_delivs = list(sel_delivs)
+                if deliv_input.strip():
+                    all_delivs.append(deliv_input.strip())
 
-                if st.button("✅ Match", type="primary", key="unm_match", disabled=not final_deliv):
-                    _run_save(save_confirmed_match, sel_city_store, sel_glovo, final_deliv,
-                              success_msg=f"Match: {sel_glovo} → {final_deliv}")
+                if st.button(f"✅ Match ({len(all_delivs)})", type="primary",
+                             key="unm_match", disabled=not all_delivs):
+                    _run_save(save_confirmed_matches, sel_city_store, sel_glovo, all_delivs,
+                              success_msg=f"{sel_glovo} → {len(all_delivs)} match Deliveroo")
 
             with col_btn:
                 st.markdown("&nbsp;", unsafe_allow_html=True)
@@ -2550,36 +2576,45 @@ def tab_store_matching():
 
         if not df_e.empty:
             st.markdown("**Seleziona uno store per cambiarne lo status:**")
+            _glovo_opts = sorted(df_e["glovo_name"].unique().tolist())
             sel_edit = st.selectbox(
                 "Store da modificare",
-                options=df_e["glovo_name"].tolist(),
+                options=_glovo_opts,
                 format_func=lambda n: f"{df_e[df_e['glovo_name']==n]['city_code'].iloc[0]} | {n}  [{df_e[df_e['glovo_name']==n]['source'].iloc[0]}]",
                 key="edit_store"
             )
-            edit_city = df_e[df_e["glovo_name"] == sel_edit]["city_code"].iloc[0]
-            edit_src  = df_e[df_e["glovo_name"] == sel_edit]["source"].iloc[0]
+            _rows_sel = df_e[df_e["glovo_name"] == sel_edit]
+            edit_city = _rows_sel["city_code"].iloc[0]
+            edit_src  = _rows_sel["source"].iloc[0]
+            cur_matches = [d for d in _rows_sel["deliveroo_name"].tolist() if str(d).strip()]
 
             st.markdown(f"**Store:** `{edit_city}` — `{sel_edit}`  |  Status attuale: `{edit_src}`")
+            if cur_matches:
+                st.markdown("**Match Deliveroo attuali (1:N):** "
+                            + ", ".join(f"`{m}`" for m in cur_matches))
 
-            col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+            col_e1, col_e2, col_e3 = st.columns([2, 1, 1])
             with col_e1:
-                new_deliv_name = st.text_input("Nuovo nome Deliveroo", key="edit_new_deliv",
-                                               placeholder="Es: Pizzeria da Paolo")
+                _opts_edit = [o for o in deliv_names.get(edit_city, []) if o not in cur_matches]
+                add_delivs = st.multiselect(
+                    "➕ Aggiungi match Deliveroo", options=_opts_edit, key="edit_add_multi",
+                    help="Aggiunge altre filiali allo stesso store Glovo (1:N)",
+                )
+                add_text = st.text_input("…o nome non in lista", key="edit_new_deliv",
+                                         placeholder="Es: Pizzeria da Paolo")
+                _to_add = list(add_delivs) + ([add_text.strip()] if add_text.strip() else [])
+                if st.button(f"➕ Aggiungi ({len(_to_add)})", key="edit_match",
+                             disabled=not _to_add):
+                    _run_save(save_confirmed_matches, edit_city, sel_edit, _to_add,
+                              success_msg=f"{sel_edit} → +{len(_to_add)} match Deliveroo")
             with col_e2:
-                st.markdown("&nbsp;", unsafe_allow_html=True)
-                st.markdown("&nbsp;", unsafe_allow_html=True)
-                if st.button("✅ Cambia match", key="edit_match",
-                             disabled=not new_deliv_name.strip()):
-                    _run_save(save_confirmed_match, edit_city, sel_edit, new_deliv_name.strip(),
-                              success_msg=f"Match aggiornato: {sel_edit} → {new_deliv_name.strip()}")
-            with col_e3:
                 st.markdown("&nbsp;", unsafe_allow_html=True)
                 st.markdown("&nbsp;", unsafe_allow_html=True)
                 if st.button("🚫 NON su Deliveroo", key="edit_not_deliv",
                              use_container_width=True):
                     _run_save(save_not_on_deliveroo, edit_city, sel_edit,
                               success_msg=f"{sel_edit} → Non su Deliveroo")
-            with col_e4:
+            with col_e3:
                 st.markdown("&nbsp;", unsafe_allow_html=True)
                 st.markdown("&nbsp;", unsafe_allow_html=True)
                 if st.button("⭐ Esclusiva Glovo", key="edit_exclusive",

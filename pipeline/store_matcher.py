@@ -209,25 +209,35 @@ def match_glovo_stores(
     review_path:  Path = REVIEW_CSV,
     threshold:    int  = AUTO_THRESHOLD,
     ambig_gap:    int  = AMBIG_GAP,
-) -> dict[tuple[str, str], Optional[str]]:
+) -> dict[tuple[str, str], list[str]]:
     """
     Esegue il matching per una lista di store Glovo contro i ristoranti Deliveroo.
 
     Restituisce:
-        { (city_code, glovo_name): deliveroo_name | None }
-        None = non trovato / in revisione
+        { (city_code, glovo_name): [deliveroo_name, ...] }
+        Lista vuota = non trovato / in revisione / risolto come esclusiva-Glovo
+        o non-su-Deliveroo. Uno store Glovo puo' essere matchato a PIU' ristoranti
+        Deliveroo (stessa insegna a indirizzi diversi) -> matching 1:N.
     """
     mapping    = load_mapping(mapping_path)
     review_q   = load_review_queue(review_path)
     new_mapping_rows  = []
     new_review_rows   = []
 
-    # Indice ground truth: (city, glovo_name_lower) -> deliveroo_name
-    gt_index = {
-        (r["city_code"].strip(), r["glovo_name"].strip().lower()): r["deliveroo_name"]
-        for _, r in mapping.iterrows()
-        if r["deliveroo_name"]
-    }
+    # Indice ground truth: (city, glovo_name_lower) -> [deliveroo_name, ...]
+    # Le righe con deliveroo_name vuoto (esclusiva / non su Deliveroo) marcano lo
+    # store come "gia' risolto manualmente" -> non va ri-processato col fuzzy.
+    gt_index: dict[tuple[str, str], list[str]] = {}
+    resolved_negative: set[tuple[str, str]] = set()
+    for _, r in mapping.iterrows():
+        gkey = (r["city_code"].strip(), r["glovo_name"].strip().lower())
+        dn = str(r["deliveroo_name"]).strip()
+        if dn:
+            lst = gt_index.setdefault(gkey, [])
+            if dn not in lst:
+                lst.append(dn)
+        else:
+            resolved_negative.add(gkey)
 
     # Indice revisione gia' in coda: non riprocessare
     in_review = {
@@ -240,20 +250,25 @@ def match_glovo_stores(
     for city, rest_name in deliveroo_names:
         deliv_by_city.setdefault(city, []).append(rest_name)
 
-    result: dict[tuple[str, str], Optional[str]] = {}
+    result: dict[tuple[str, str], list[str]] = {}
 
     for city, glovo_nm, store_id in glovo_names:
         key_lower = glovo_nm.lower()
         gt_key    = (city, key_lower)
 
-        # ----- Livello 1: ground truth -----
+        # ----- Livello 1: ground truth (puo' essere 1:N) -----
         if gt_key in gt_index:
-            result[(city, glovo_nm)] = gt_index[gt_key]
+            result[(city, glovo_nm)] = list(gt_index[gt_key])
+            continue
+
+        # ----- Risolto manualmente come esclusiva / non su Deliveroo -----
+        if gt_key in resolved_negative:
+            result[(city, glovo_nm)] = []
             continue
 
         # ----- Gia' in coda di revisione -----
         if gt_key in in_review:
-            result[(city, glovo_nm)] = None
+            result[(city, glovo_nm)] = []
             continue
 
         # ----- Livello 2: fuzzy strict -----
@@ -261,7 +276,7 @@ def match_glovo_stores(
         if not candidates or not HAS_RAPIDFUZZ:
             # Nessun candidato Deliveroo per questa citta': non va in revisione,
             # e' semplicemente uno store non presente su Deliveroo (o non ancora scrappato)
-            result[(city, glovo_nm)] = None
+            result[(city, glovo_nm)] = []
             continue
 
         norm_glovo = _normalize(glovo_nm)
@@ -278,7 +293,7 @@ def match_glovo_stores(
 
         if best_score >= threshold and (best_score - second_score) >= ambig_gap:
             # Match automatico accettato
-            result[(city, glovo_nm)] = best_name
+            result[(city, glovo_nm)] = [best_name]
             new_mapping_rows.append({
                 "city_code":       city,
                 "glovo_name":      glovo_nm,
@@ -287,10 +302,10 @@ def match_glovo_stores(
                 "confidence":      str(round(best_score / 100, 3)),
                 "source":          "auto_fuzzy",
             })
-            gt_index[gt_key] = best_name
+            gt_index[gt_key] = [best_name]
         elif best_score >= REVIEW_MIN_SCORE:
             # Ambiguo o sotto soglia ma abbastanza alto da valere la revisione
-            result[(city, glovo_nm)] = None
+            result[(city, glovo_nm)] = []
             reason = "below_threshold" if best_score < threshold else "ambiguous"
             new_review_rows.append({
                 "city_code":           city,
@@ -303,11 +318,15 @@ def match_glovo_stores(
             in_review.add(gt_key)
         else:
             # Score troppo basso: store probabilmente non su Deliveroo, scarta silenziosamente
-            result[(city, glovo_nm)] = None
+            result[(city, glovo_nm)] = []
 
     # Salva nuovi match automatici nel ground truth
     if new_mapping_rows:
         updated = pd.concat([mapping, pd.DataFrame(new_mapping_rows)], ignore_index=True)
+        # Dedup sulla tripla (city, glovo, deliveroo): preserva il 1:N ma evita righe identiche
+        updated = updated.drop_duplicates(
+            subset=["city_code", "glovo_name", "deliveroo_name"], keep="last"
+        )
         save_mapping(updated, mapping_path)
         print(f"[store_matcher] {len(new_mapping_rows)} nuovi match automatici salvati")
 
@@ -340,6 +359,12 @@ def confirm_match(city_code: str, glovo_name: str, deliveroo_name: str,
     ]
     store_id = rev_row["glovo_store_id"].iloc[0] if len(rev_row) > 0 else ""
 
+    # Lo store ora ha (almeno) un match: rimuovi eventuali righe "negative"
+    # (esclusiva-Glovo / non-su-Deliveroo) per questo store.
+    _is_glovo = (mapping["city_code"] == city_code) & (mapping["glovo_name"] == glovo_name)
+    _is_neg   = mapping["deliveroo_name"].fillna("").astype(str).str.strip() == ""
+    mapping   = mapping[~(_is_glovo & _is_neg)]
+
     new_row = pd.DataFrame([{
         "city_code":       city_code,
         "glovo_name":      glovo_name,
@@ -348,8 +373,10 @@ def confirm_match(city_code: str, glovo_name: str, deliveroo_name: str,
         "confidence":      "1.0",
         "source":          "manual_confirmed",
     }])
+    # Dedup sulla TRIPLA (city, glovo, deliveroo): additivo -> un Glovo puo' avere
+    # piu' Deliveroo (1:N), ma non righe duplicate.
     updated_mapping = pd.concat([mapping, new_row], ignore_index=True).drop_duplicates(
-        subset=["city_code", "glovo_name"], keep="last"
+        subset=["city_code", "glovo_name", "deliveroo_name"], keep="last"
     )
     save_mapping(updated_mapping, mapping_path)
 
@@ -359,6 +386,66 @@ def confirm_match(city_code: str, glovo_name: str, deliveroo_name: str,
     ]
     save_review_queue(updated_review, review_path)
     print(f"[store_matcher] Match confermato: {city_code} | {glovo_name} -> {deliveroo_name}")
+
+
+def set_matches(city_code: str, glovo_name: str, deliveroo_names: list[str],
+                mapping_path: Path = MAPPING_CSV,
+                review_path:  Path = REVIEW_CSV) -> None:
+    """
+    Imposta l'insieme COMPLETO dei match Deliveroo per uno store Glovo (1:N).
+    Sostituisce tutte le righe esistenti di quel Glovo (positive e negative) con
+    una riga per ogni nome in `deliveroo_names`. Usato dalla UI multi-select.
+    Se `deliveroo_names` e' vuoto, lo store resta senza match (UNMATCHED).
+    """
+    mapping = load_mapping(mapping_path)
+    review  = load_review_queue(review_path)
+
+    rev_row  = review[(review["city_code"] == city_code) & (review["glovo_name"] == glovo_name)]
+    store_id = rev_row["glovo_store_id"].iloc[0] if len(rev_row) > 0 else ""
+
+    # Rimuovi tutte le righe esistenti per questo store
+    _is_glovo = (mapping["city_code"] == city_code) & (mapping["glovo_name"] == glovo_name)
+    mapping   = mapping[~_is_glovo]
+
+    clean_names = []
+    for nm in deliveroo_names:
+        nm = str(nm).strip()
+        if nm and nm not in clean_names:
+            clean_names.append(nm)
+
+    if clean_names:
+        new_rows = pd.DataFrame([{
+            "city_code":       city_code,
+            "glovo_name":      glovo_name,
+            "glovo_store_id":  store_id,
+            "deliveroo_name":  nm,
+            "confidence":      "1.0",
+            "source":          "manual_confirmed",
+        } for nm in clean_names])
+        mapping = pd.concat([mapping, new_rows], ignore_index=True).drop_duplicates(
+            subset=["city_code", "glovo_name", "deliveroo_name"], keep="last"
+        )
+
+    save_mapping(mapping, mapping_path)
+
+    updated_review = review[
+        ~((review["city_code"] == city_code) & (review["glovo_name"] == glovo_name))
+    ]
+    save_review_queue(updated_review, review_path)
+    print(f"[store_matcher] Match impostati: {city_code} | {glovo_name} -> {clean_names or '(nessuno)'}")
+
+
+def remove_match(city_code: str, glovo_name: str, deliveroo_name: str,
+                 mapping_path: Path = MAPPING_CSV) -> None:
+    """Rimuove UN singolo match Deliveroo da uno store Glovo (1:N)."""
+    mapping = load_mapping(mapping_path)
+    mask = (
+        (mapping["city_code"] == city_code)
+        & (mapping["glovo_name"] == glovo_name)
+        & (mapping["deliveroo_name"].astype(str).str.strip() == str(deliveroo_name).strip())
+    )
+    save_mapping(mapping[~mask], mapping_path)
+    print(f"[store_matcher] Match rimosso: {city_code} | {glovo_name} -/-> {deliveroo_name}")
 
 
 def reject_match(city_code: str, glovo_name: str,
