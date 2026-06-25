@@ -144,11 +144,45 @@ def read_all(
     # I match manuali hanno priorita'; prendiamo l'ultimo per ogni (city, glovo)
     # -------------------------------------------------------------------------
     if not manual_matches.empty and "city_code" in manual_matches.columns:
-        # Prendi l'ultimo record per coppia (city_code, glovo_name)
-        mm = manual_matches.copy()
-        mm = mm.drop_duplicates(subset=["city_code", "glovo_name"], keep="last")
-        mm = mm[["city_code", "glovo_name", "glovo_store_id",
-                 "deliveroo_name", "confidence", "source"]]
+        # Ricostruisce lo stato finale per (city, glovo) rispettando l'ordine di append:
+        # un negativo (esclusiva / non-su-Deliveroo) resetta lo store; i positivi si
+        # ACCUMULANO -> matching 1:N (piu' righe Deliveroo per lo stesso Glovo).
+        _state: dict[tuple[str, str], dict] = {}
+        for _, r in manual_matches.iterrows():
+            city     = str(r.get("city_code", "")).strip()
+            glovo_nm = str(r.get("glovo_name", "")).strip()
+            if not city or not glovo_nm:
+                continue
+            dn  = str(r.get("deliveroo_name", "")).strip()
+            src = str(r.get("source", "")).strip().lower()
+            sid = str(r.get("glovo_store_id", "")).strip()
+            k = (city, glovo_nm)
+            if dn:
+                s = _state.get(k)
+                if not s or s["mode"] == "neg":
+                    _state[k] = {"mode": "pos", "names": [dn], "src": "manual_confirmed", "sid": sid}
+                else:
+                    if dn not in s["names"]:
+                        s["names"].append(dn)
+                    if sid:
+                        s["sid"] = sid
+            else:
+                _src = "not_on_deliveroo" if ("not_deliveroo" in src or "not_on_deliveroo" in src) else "manual_rejected"
+                _state[k] = {"mode": "neg", "names": [], "src": _src, "sid": sid}
+
+        _rows = []
+        for (city, glovo_nm), s in _state.items():
+            if s["mode"] == "pos":
+                for nm in s["names"]:
+                    _rows.append({"city_code": city, "glovo_name": glovo_nm,
+                                  "glovo_store_id": s["sid"], "deliveroo_name": nm,
+                                  "confidence": "1.0", "source": "manual_confirmed"})
+            else:
+                _rows.append({"city_code": city, "glovo_name": glovo_nm,
+                              "glovo_store_id": s["sid"], "deliveroo_name": "",
+                              "confidence": "1.0", "source": s["src"]})
+        mm = pd.DataFrame(_rows, columns=["city_code", "glovo_name", "glovo_store_id",
+                                          "deliveroo_name", "confidence", "source"])
 
         if not store_mapping.empty and "city_code" in store_mapping.columns:
             # Rimuovi righe che verranno sovrascritte, MA preserva le Exclusive Glovo

@@ -338,20 +338,39 @@ def run_pipeline(
             except Exception:
                 _mm  = pd.DataFrame()
             if not _mm.empty and "city_code" in _mm.columns:
-                # Ultima riga vince per ogni coppia (city, glovo)
-                _mm = _mm.drop_duplicates(subset=["city_code", "glovo_name"], keep="last")
-                imported = 0
+                from pipeline.store_matcher import mark_not_on_deliveroo, set_matches
+                # Ricostruisce lo stato finale per (city, glovo) rispettando l'ordine di
+                # append: un negativo (esclusiva / non-su-Deliveroo) resetta lo store;
+                # i positivi si ACCUMULANO -> matching 1:N.
+                _state: dict[tuple[str, str], dict] = {}
                 for _, row in _mm.iterrows():
                     city         = str(row.get("city_code", "")).strip()
                     glovo_nm     = str(row.get("glovo_name", "")).strip()
+                    if not city or not glovo_nm:
+                        continue
                     deliveroo_nm = str(row.get("deliveroo_name", "")).strip()
-                    if city and glovo_nm:
-                        if deliveroo_nm:
-                            confirm_match(city, glovo_nm, deliveroo_nm)
-                        else:
-                            reject_match(city, glovo_nm)
-                        imported += 1
-                print(f"[store_matcher] {imported} manual_matches importati da Sheets")
+                    src          = str(row.get("source", "")).strip().lower()
+                    k = (city, glovo_nm)
+                    if deliveroo_nm:
+                        s = _state.get(k)
+                        if not s or s["mode"] == "neg":
+                            _state[k] = {"mode": "pos", "names": [deliveroo_nm], "neg": ""}
+                        elif deliveroo_nm not in s["names"]:
+                            s["names"].append(deliveroo_nm)
+                    else:
+                        _neg = "not_deliveroo" if ("not_deliveroo" in src or "not_on_deliveroo" in src) else "exclusive"
+                        _state[k] = {"mode": "neg", "names": [], "neg": _neg}
+
+                imported = 0
+                for (city, glovo_nm), s in _state.items():
+                    if s["mode"] == "pos":
+                        set_matches(city, glovo_nm, s["names"])
+                    elif s["neg"] == "not_deliveroo":
+                        mark_not_on_deliveroo(city, glovo_nm)
+                    else:
+                        reject_match(city, glovo_nm)
+                    imported += 1
+                print(f"[store_matcher] {imported} manual_matches importati da Sheets (1:N)")
         except Exception as e:
             print(f"[store_matcher] Avviso: import manual_matches fallito ({e})")
 
@@ -419,6 +438,10 @@ def run_pipeline(
         _nod_rows  = _mapping_df[(_mapping_df["source"] == "not_on_deliveroo") & _no_deliv]
         exclusive_glovo_set  = set(zip(_excl_rows["city_code"].str.strip(), _excl_rows["glovo_name"].str.strip()))
         not_on_deliveroo_set = set(zip(_nod_rows["city_code"].str.strip(),  _nod_rows["glovo_name"].str.strip()))
+    # Uno store con almeno un match Deliveroo (1:N) non e' esclusiva ne' non-su-Deliveroo
+    _matched_keys = {(str(c).strip(), str(g).strip()) for (c, g), v in match_map.items() if v}
+    exclusive_glovo_set  -= _matched_keys
+    not_on_deliveroo_set -= _matched_keys
     print(f"      Exclusive Glovo: {len(exclusive_glovo_set)} | Non su Deliveroo: {len(not_on_deliveroo_set)} store")
 
     store_parity = compute_store_parity(glovo_store, deliveroo_df, match_map, exclusive_glovo_set, not_on_deliveroo_set)
