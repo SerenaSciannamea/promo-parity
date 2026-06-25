@@ -1797,7 +1797,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
         return "".join(c for c in _ud.normalize("NFD", str(s).lower())
                        if _ud.category(c) != "Mn")
     _q = st.text_input("🔍 Cerca store (accenti ignorati)", "",
-                       key=f"store_search{_kp}",
+                       key=f"store_drill_search{_kp}",
                        placeholder="Es: poke → trova anche PokèFlash")
     _opts = [n for n in store_names if _fold(_q) in _fold(n)] if _q.strip() else store_names
     sel_store = st.selectbox("Seleziona store", ["— seleziona —"] + _opts,
