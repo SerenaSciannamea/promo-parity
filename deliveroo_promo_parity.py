@@ -1150,6 +1150,12 @@ def main() -> int:
         )
         for city_code, geometry in polygons
     )
+    # Ordina le citta' dalla piu' piccola (meno geohash) alla piu' grande:
+    # cosi', se lo scraping viene interrotto, si massimizza il numero di citta'
+    # completate per intero (le grandi, piu' lente, restano in coda).
+    city_points_map = OrderedDict(
+        sorted(city_points_map.items(), key=lambda kv: len(kv[1]))
+    )
     processed = load_processed_points(samples_csv, raw_restaurants_csv)
     total_points_planned = sum(len(points) for points in city_points_map.values())
     already_completed = sum(
