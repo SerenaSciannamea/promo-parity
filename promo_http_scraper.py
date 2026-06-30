@@ -513,7 +513,9 @@ def parse_args():
     p.add_argument("--city-codes", default="", help="vuoto = TUTTI i poligoni di Polygons.csv")
     p.add_argument("--collection", default="offers",
                    help="collezione feed: 'offers' (consigliato, lista promo affidabile) o 'all-restaurants'")
-    p.add_argument("--sample-step-km", type=float, default=3.0)   # griglia uniforme 3 km su tutti i poligoni
+    p.add_argument("--sample-step-km", type=float, default=3.0)   # griglia standard 3 km
+    p.add_argument("--big-cities", default="MIL", help="citta' grandi a griglia piu' larga (--big-city-step-km) per alleggerire DataDome")
+    p.add_argument("--big-city-step-km", type=float, default=4.0)  # MIL: 4 km -> meno geohash, meno carico
     p.add_argument("--geohash-precision", type=int, default=7)
     p.add_argument("--api-geohash-precision", type=int, default=12)
     p.add_argument("--max-total-points", type=int, default=0, help="0 = tutti i geohash")
@@ -522,9 +524,9 @@ def parse_args():
     p.add_argument("--min-delay", type=float, default=1.0)
     p.add_argument("--max-delay", type=float, default=2.5)
     p.add_argument("--store-delay", type=float, default=0.8)
-    p.add_argument("--rest-every", type=int, default=60, help="pausa lunga ogni N menu aperti (anti-bot)")
-    p.add_argument("--rest-seconds", type=float, default=20.0)
-    p.add_argument("--restart-session-every", type=int, default=150, help="ricrea la sessione HTTP ogni N menu (anti-bot DataDome)")
+    p.add_argument("--rest-every", type=int, default=50, help="pausa lunga ogni N menu aperti (anti-bot)")
+    p.add_argument("--rest-seconds", type=float, default=30.0)
+    p.add_argument("--restart-session-every", type=int, default=80, help="ricrea la sessione HTTP ogni N menu (anti-bot DataDome)")
     p.add_argument("--stall-timeout", type=float, default=240, help="anti-hang: se nessun progresso da N secondi -> auto-exit(2) per il resume")
     return p.parse_args()
 
@@ -543,7 +545,11 @@ def main() -> int:
         ensure_csv(p, f)
 
     polygons = parse_polygons(args.polygons, selected)
-    city_points = OrderedDict((c, sample_points(g, args.sample_step_km, args.geohash_precision)) for c, g in polygons)
+    big = {clean_text(c).upper() for c in args.big_cities.split(",") if clean_text(c)}
+    city_points = OrderedDict(
+        (c, sample_points(g, args.big_city_step_km if c in big else args.sample_step_km, args.geohash_precision))
+        for c, g in polygons
+    )
     city_points = OrderedDict(sorted(city_points.items(), key=lambda kv: len(kv[1])))
     processed = load_processed(samp_csv)
 
