@@ -652,9 +652,14 @@ def load_deliveroo_promo_counts() -> pd.DataFrame:
         return pd.DataFrame(columns=["city_code", "restaurant_name", "deliveroo_promo_products"])
 
     promo_mask = df["promotion_type"].str.strip() != ""
+    # Week-aware: il conteggio deve riferirsi alla STESSA settimana del verdetto,
+    # altrimenti una promo di un'altra settimana gonfia il numero (bug Ami Poke).
+    group_keys = ["city_code", "restaurant_name"]
+    if "week_num" in df.columns:
+        group_keys.append("week_num")
     counts = (
         df[promo_mask]
-        .groupby(["city_code", "restaurant_name"])
+        .groupby(group_keys)
         .size()
         .reset_index(name="deliveroo_promo_products")
     )
@@ -1368,7 +1373,7 @@ _SD_GLOVO_COLS = {
 }
 _SD_DELIVEROO_COLS = {
     "Deliveroo Restaurant", "Deliveroo Promo Type", "Deliveroo % OFF",
-    "Deliveroo Items in Promo", "Deliveroo Promo Detail",
+    "Deliveroo Items in Promo", "Stores with this promo", "Deliveroo Promo Detail",
 }
 _SD_PARITY_BG = {
     "SUPERIORITY":      "#d0f0ea",
@@ -1587,7 +1592,10 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
             roo_counts["restaurant_name"].str.strip() != ""
         ].rename(columns={"restaurant_name": "deliveroo_name"})
         if not roo_clean.empty:
-            df = df.merge(roo_clean, on=["city_code", "deliveroo_name"], how="left")
+            merge_keys = ["city_code", "deliveroo_name"]
+            if "week_num" in roo_clean.columns and "week_num" in df.columns:
+                merge_keys.append("week_num")   # join anche sulla settimana se disponibile
+            df = df.merge(roo_clean, on=merge_keys, how="left")
             df["deliveroo_promo_products"] = df["deliveroo_promo_products"].fillna(0).astype(int)
         else:
             df["deliveroo_promo_products"] = 0
@@ -1673,6 +1681,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
         "parity",
         "glovo_rank_label", "glovo_pct_off", "glovo_min_basket", "glovo_promo_products",
         "deliveroo_rank_label", "deliveroo_promo_text", "deliveroo_pct_off", "deliveroo_min_basket", "deliveroo_promo_products",
+        "deliveroo_stores_pct", "deliveroo_stores_frac",
         "revenue", "promo_coverage_pct"
     ]
     available = [c for c in display_cols if c in df_sorted.columns]
@@ -1754,6 +1763,18 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
     if "deliveroo_promo_products" in disp.columns:
         disp["deliveroo_promo_products"] = disp.apply(_roo_items_label, axis=1)
 
+    # Colonna "Stores with this promo": % di filiali con quel nome (in quel city code)
+    # che hanno la promo mostrata. Es. La Piadineria 2/6 -> "33% (2/6)".
+    if "deliveroo_stores_pct" in disp.columns:
+        def _stores_pct_label(row):
+            pct = pd.to_numeric(row.get("deliveroo_stores_pct"), errors="coerce")
+            if pd.isna(pct) or pct <= 0:
+                return ""
+            frac = str(row.get("deliveroo_stores_frac", "")).strip()
+            return f"{pct:.0f}% ({frac})" if frac else f"{pct:.0f}%"
+        disp["deliveroo_stores_pct"] = disp.apply(_stores_pct_label, axis=1)
+    disp = disp.drop(columns=["deliveroo_stores_frac"], errors="ignore")
+
     # Rinomina colonne
     disp = disp.rename(columns={
         "city_code":               "City Code",
@@ -1768,6 +1789,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
         "deliveroo_rank_label":    "Deliveroo Promo Type",
         "deliveroo_pct_off":       "Deliveroo % OFF",
         "deliveroo_promo_products":"Deliveroo Items in Promo",
+        "deliveroo_stores_pct":    "Stores with this promo",
         "deliveroo_promo_text":    "Deliveroo Promo Detail",
         "revenue":                 "Revenue",
         "promo_coverage_pct":      "Glovo Promo Coverage",
