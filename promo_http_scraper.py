@@ -514,8 +514,8 @@ def parse_args():
     p.add_argument("--collection", default="offers",
                    help="collezione feed: 'offers' (consigliato, lista promo affidabile) o 'all-restaurants'")
     p.add_argument("--sample-step-km", type=float, default=3.0)   # griglia standard 3 km
-    p.add_argument("--big-cities", default="MIL", help="citta' grandi a griglia piu' larga (--big-city-step-km) per alleggerire DataDome")
-    p.add_argument("--big-city-step-km", type=float, default=4.0)  # MIL: 4 km -> meno geohash, meno carico
+    p.add_argument("--big-cities", default="", help="citta' a griglia piu' larga (--big-city-step-km); vuoto = tutte a --sample-step-km. NB: cambiare lo step invalida il resume di quella citta'")
+    p.add_argument("--big-city-step-km", type=float, default=4.0)  # opzione: es. --big-cities MIL su un run FRESCO
     p.add_argument("--geohash-precision", type=int, default=7)
     p.add_argument("--api-geohash-precision", type=int, default=12)
     p.add_argument("--max-total-points", type=int, default=0, help="0 = tutti i geohash")
