@@ -37,12 +37,22 @@ from pipeline.promo_ranker import rank_deliveroo, parity_label, rank_label, NO_P
 _PARITY_SEVERITY = {"INFERIORITY": 0, "PARITY": 1, "SUPERIORITY": 2}
 
 
+def _aov_upgrade(rank: float, min_basket: float, aov: float | None) -> float:
+    """Promo a minimum-basket (rank 3.0) -> trattala come % semplice (rank 2.0) quando
+    la soglia NON e' una barriera secondo l'AOV del partner: AOV <= soglia + 1 euro
+    (AOV sotto la soglia, o la supera di al massimo 1 euro)."""
+    if rank == 3.0 and min_basket and aov is not None and aov <= min_basket + 1.0:
+        return 2.0
+    return rank
+
+
 def compute_store_parity(
     glovo_store: pd.DataFrame,
     deliveroo_deduped: pd.DataFrame,
     store_match_map: dict[tuple[str, str], list[str] | str | None],
     exclusive_glovo_set:  set[tuple[str, str]] | None = None,
     not_on_deliveroo_set: set[tuple[str, str]] | None = None,
+    aov_map: dict[tuple[str, str, str], float] | None = None,
 ) -> pd.DataFrame:
     """
     Calcola la parity per ogni store Glovo matchato.
@@ -67,14 +77,28 @@ def compute_store_parity(
     """
     rows = []
 
-    # Indice Deliveroo: (city_code, restaurant_name_lower) -> promotion_type
-    deliv_index: dict[tuple[str, str], str] = {}
+    # Indice Deliveroo: (city_code, restaurant_name_lower) -> info promo.
+    # Il deduped puo' avere piu' righe per (citta', nome): promo DIVERSE sullo stesso nome.
+    # Qui teniamo la promo PIU' FORTE (rank minore, poi pct maggiore) = confronto col competitor
+    # piu' aggressivo (punto 4). Portiamo anche % filiali con quella promo (punto 5).
+    deliv_index: dict[tuple[str, str], dict] = {}
     if deliveroo_deduped is not None and len(deliveroo_deduped) > 0:
         for _, r in deliveroo_deduped.iterrows():
             city = str(r.get("city_code", "")).strip()
             name = str(r.get("restaurant_name", "")).strip()
             promo = str(r.get("promotion_type", "")).strip()
-            deliv_index[(city, name.lower())] = promo
+            rk = rank_deliveroo(promo) if promo else NO_PROMO_RANK
+            pc = extract_pct_deliveroo(promo) if promo else 0.0
+            n_with = int(pd.to_numeric(r.get("n_stores_with_promo"), errors="coerce") or 0)
+            n_tot  = int(pd.to_numeric(r.get("n_stores_total"), errors="coerce") or 0)
+            spct   = pd.to_numeric(r.get("stores_pct"), errors="coerce")
+            spct   = float(spct) if pd.notna(spct) else (round(100 * n_with / n_tot) if n_tot else 0.0)
+            key = (city, name.lower())
+            cur = deliv_index.get(key)
+            cand = {"promo": promo, "rank": rk, "pct": pc,
+                    "n_with": n_with, "n_tot": n_tot, "stores_pct": spct}
+            if cur is None or (rk, -pc) < (cur["rank"], -cur["pct"]):
+                deliv_index[key] = cand
 
     for _, row in glovo_store.iterrows():
         city        = str(row["city_code"]).strip()
@@ -86,6 +110,10 @@ def compute_store_parity(
         glovo_pct            = float(row.get("max_pct_off") or row.get("avg_pct_off") or 0)
         glovo_promo_products = int(row.get("promo_product_count") or 0)
         glovo_min_basket     = float(row.get("min_basket_size") or 0)
+
+        # AOV del partner (city, store, week) -> upgrade min-basket a % semplice se non e' barriera
+        aov = aov_map.get((city, glovo_nm, week)) if aov_map else None
+        glovo_rank = _aov_upgrade(glovo_rank, glovo_min_basket, aov)
 
         # Match Deliveroo: puo' essere 1:N (stessa insegna a indirizzi diversi).
         # Le filiali dovrebbero avere la stessa promo; se differiscono confrontiamo
@@ -102,14 +130,18 @@ def compute_store_parity(
         deliveroo_rank       = NO_PROMO_RANK
         deliveroo_pct        = 0.0
         deliveroo_min_basket = 0.0
+        deliveroo_stores_pct = None
+        deliveroo_stores_frac = ""
 
         if deliveroo_names:
             best = None  # tieni la filiale che da' la parity peggiore per Glovo
             for dn in deliveroo_names:
-                b_promo = deliv_index.get((city, dn.lower()))
-                b_rank  = rank_deliveroo(b_promo) if b_promo is not None else NO_PROMO_RANK
-                b_pct   = extract_pct_deliveroo(b_promo) if b_promo else 0.0
+                ent     = deliv_index.get((city, dn.lower()))
+                b_promo = ent["promo"] if ent else None
+                b_rank  = ent["rank"] if ent else NO_PROMO_RANK
+                b_pct   = ent["pct"] if ent else 0.0
                 b_bask  = extract_min_basket_deliveroo(b_promo) if b_promo else 0.0
+                b_rank  = _aov_upgrade(b_rank, b_bask, aov)   # stessa regola AOV lato Deliveroo
                 b_par   = parity_label(
                     glovo_rank, b_rank,
                     glovo_pct_off=glovo_pct,
@@ -123,9 +155,12 @@ def compute_store_parity(
                 sev = _PARITY_SEVERITY.get(b_par, 2)
                 sort_key = (sev, b_rank, -b_pct, dn)
                 if best is None or sort_key < best[0]:
-                    best = (sort_key, dn, b_promo, b_rank, b_pct, b_bask, b_par)
+                    best = (sort_key, dn, b_promo, b_rank, b_pct, b_bask, b_par, ent)
             (_, deliveroo_nm, deliveroo_promo, deliveroo_rank,
-             deliveroo_pct, deliveroo_min_basket, parity) = best
+             deliveroo_pct, deliveroo_min_basket, parity, best_ent) = best
+            if best_ent and best_ent.get("n_tot"):
+                deliveroo_stores_pct  = best_ent["stores_pct"]
+                deliveroo_stores_frac = f"{best_ent['n_with']}/{best_ent['n_tot']}"
         elif exclusive_glovo_set and (city, glovo_nm) in exclusive_glovo_set:
             parity = "EXCLUSIVE_GLOVO"
         elif not_on_deliveroo_set and (city, glovo_nm) in not_on_deliveroo_set:
@@ -149,6 +184,8 @@ def compute_store_parity(
             "glovo_min_basket":     glovo_min_basket if glovo_min_basket else None,
             "deliveroo_pct_off":    round(deliveroo_pct, 1) if deliveroo_pct else None,
             "deliveroo_min_basket": round(deliveroo_min_basket, 1) if deliveroo_min_basket else None,
+            "deliveroo_stores_pct": round(deliveroo_stores_pct) if deliveroo_stores_pct else None,
+            "deliveroo_stores_frac": deliveroo_stores_frac,
             "glovo_promo_products": int(row.get("promo_product_count", 0)),
             "revenue":              float(row.get("revenue", 0)),
             "promo_coverage_pct":   float(row.get("promo_coverage_pct", 0)),
