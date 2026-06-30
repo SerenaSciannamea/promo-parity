@@ -21,9 +21,11 @@ import argparse
 import csv
 import json
 import math
+import os
 import random
 import re
 import sys
+import threading
 import time
 import unicodedata
 import uuid
@@ -42,6 +44,30 @@ if hasattr(sys.stdout, "reconfigure"):
 import requests
 from shapely import wkt
 from shapely.geometry import Point
+
+# --- Watchdog interno anti-hang -------------------------------------------
+# Se lo scraper non fa progressi da troppo tempo (es. un fetch di rete appeso
+# che non rispetta il timeout), un thread daemon lo termina con os._exit(2):
+# un HANG diventa cosi' un'USCITA pulita, che il wrapper rileva e fa il resume.
+_LAST_PROGRESS = time.monotonic()
+
+
+def _touch_progress() -> None:
+    global _LAST_PROGRESS
+    _LAST_PROGRESS = time.monotonic()
+
+
+def _start_stall_watchdog(stall_seconds: float) -> None:
+    def _loop():
+        while True:
+            time.sleep(20)
+            idle = time.monotonic() - _LAST_PROGRESS
+            if idle > stall_seconds:
+                print(f"\n!! STALLO: nessun progresso da {idle:.0f}s (> {stall_seconds:.0f}s) "
+                      f"-> esco con exit 2 per far ripartire il resume.", flush=True)
+                os._exit(2)
+    threading.Thread(target=_loop, daemon=True).start()
+
 
 BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"
 GRAPHQL_ENDPOINT = "https://api.it.deliveroo.com/consumer/graphql/"
@@ -499,11 +525,14 @@ def parse_args():
     p.add_argument("--rest-every", type=int, default=60, help="pausa lunga ogni N menu aperti (anti-bot)")
     p.add_argument("--rest-seconds", type=float, default=20.0)
     p.add_argument("--restart-session-every", type=int, default=150, help="ricrea la sessione HTTP ogni N menu (anti-bot DataDome)")
+    p.add_argument("--stall-timeout", type=float, default=240, help="anti-hang: se nessun progresso da N secondi -> auto-exit(2) per il resume")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    _start_stall_watchdog(args.stall_timeout)   # anti-hang: auto-exit(2) se si blocca
+    _touch_progress()
     selected = {clean_text(c).upper() for c in args.city_codes.split(",") if clean_text(c)}
     out = args.output_dir
     raw_csv, prod_csv = out / "deliveroo_promo_raw.csv", out / "deliveroo_promo_products.csv"
@@ -529,6 +558,7 @@ def main() -> int:
             pts = points if not args.max_total_points else points[:args.max_total_points]
             print(f"=== {city} === geohash da visitare: {len(pts)}", flush=True)
             for lat, lon, gh in pts:
+                _touch_progress()
                 if (city, gh) in processed:
                     continue
                 if args.max_stores and stores_opened >= args.max_stores:
@@ -577,6 +607,7 @@ def main() -> int:
                             raise
                         continue
                     stores_opened += 1
+                    _touch_progress()   # progresso ad ogni menu aperto
                     if args.rest_every and stores_opened % args.rest_every == 0:
                         print(f"    -> respiro {args.rest_seconds:.0f}s (menu aperti={stores_opened})", flush=True)
                         time.sleep(args.rest_seconds)
