@@ -12,7 +12,7 @@ try { Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction Stop
 $at  = (Get-Date).Date.AddHours(19).AddMinutes(35)
 $trg = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Tuesday, Friday -At $at
 # Aggiunge la ripetizione (ogni 20 min per 8h) al trigger settimanale
-$rep = New-ScheduledTaskTrigger -Once -At $at -RepetitionInterval (New-TimeSpan -Minutes 20) -RepetitionDuration (New-TimeSpan -Hours 8)
+$rep = New-ScheduledTaskTrigger -Once -At $at -RepetitionInterval (New-TimeSpan -Minutes 3) -RepetitionDuration (New-TimeSpan -Hours 12)
 $trg.Repetition = $rep.Repetition
 
 $action    = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`""

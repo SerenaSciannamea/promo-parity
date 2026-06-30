@@ -11,7 +11,7 @@ $task    = "Promo HTTP Scraper"
 $outDir  = "$proj\output_http_promo"
 $marker  = "$proj\data\promo_http_last_success.txt"
 $log     = "$proj\data\promo_http_watchdog.log"
-$STALL_MIN = 12   # output fermo da piu' di questi minuti = stallo/hang
+$STALL_MIN = 5    # output fermo da piu' di questi minuti = stallo/hang (watchdog gira ogni 3 min)
 New-Item -ItemType Directory -Force -Path "$proj\data" | Out-Null
 function Log($m) { Add-Content -Path $log -Value ("[{0:yyyy-MM-dd HH:mm:ss}] {1}" -f (Get-Date), $m) -Encoding UTF8 }
 
