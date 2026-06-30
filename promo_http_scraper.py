@@ -94,6 +94,7 @@ PROD_FIELDS    = ["city_code", "restaurant_name", "promotion_type", "product_nam
 DEDUP_FIELDS   = ["city_code", "restaurant_name", "promotion_type",
                   "n_stores_with_promo", "n_stores_total", "stores_pct"]
 STOREIDX_FIELDS = ["city_code", "name_norm", "store_id"]   # indice di TUTTE le filiali viste (anche senza promo) = denominatore punto 5
+OPENED_FIELDS   = ["store_id"]   # store gia' aperti (menu fetchato): persistito tra i resume -> niente riaperture
 SAMPLE_FIELDS  = ["city_code", "geohash", "lat", "lon", "status", "restaurant_count", "checked_url", "scraped_at_utc"]
 DEBUG_FIELDS   = ["city_code", "restaurant_name", "feed_badge", "offer_typenames",
                   "min_order_value", "max_pct_off", "n_promo_items", "source_url", "scraped_at_utc"]
@@ -441,6 +442,19 @@ def load_processed(samples_csv):
     return done
 
 
+def load_opened(opened_csv) -> set:
+    """Store gia' aperti in sessioni precedenti -> per non riaprirli al resume."""
+    s = set()
+    if not opened_csv.exists():
+        return s
+    with opened_csv.open("r", encoding="utf-8-sig", newline="") as h:
+        for row in csv.DictReader(h):
+            sid = clean_text(row.get("store_id", ""))
+            if sid:
+                s.add(sid)
+    return s
+
+
 def _norm_dedup(name: str) -> str:
     s = unicodedata.normalize("NFKD", clean_text(name).lower())
     s = "".join(c for c in s if not unicodedata.combining(c))
@@ -540,8 +554,9 @@ def main() -> int:
     raw_csv, prod_csv = out / "deliveroo_promo_raw.csv", out / "deliveroo_promo_products.csv"
     samp_csv, dbg_csv = out / "deliveroo_sample_status.csv", out / "deliveroo_promo_offers_debug.csv"
     idx_csv = out / "deliveroo_store_index.csv"
+    opened_csv = out / "deliveroo_opened.csv"
     for p, f in [(raw_csv, RAW_FIELDS), (prod_csv, PROD_FIELDS), (samp_csv, SAMPLE_FIELDS),
-                 (dbg_csv, DEBUG_FIELDS), (idx_csv, STOREIDX_FIELDS)]:
+                 (dbg_csv, DEBUG_FIELDS), (idx_csv, STOREIDX_FIELDS), (opened_csv, OPENED_FIELDS)]:
         ensure_csv(p, f)
 
     polygons = parse_polygons(args.polygons, selected)
@@ -555,7 +570,9 @@ def main() -> int:
 
     session = requests.Session()
     stores_opened = 0
-    seen_stores: set[str] = set()
+    seen_stores: set[str] = load_opened(opened_csv)   # persistito tra i resume -> niente riaperture
+    if seen_stores:
+        print(f"Resume: {len(seen_stores)} store gia' aperti caricati (non verranno riaperti).", flush=True)
     seen_idx: set[tuple] = set()    # (city, name_norm, store_id) gia' indicizzati in questa sessione
     n_raw = 0
     start = time.time()
@@ -614,6 +631,7 @@ def main() -> int:
                         continue
                     stores_opened += 1
                     _touch_progress()   # progresso ad ogni menu aperto
+                    append_rows(opened_csv, OPENED_FIELDS, [{"store_id": sid}])   # persisti -> niente riaperture al resume
                     if args.rest_every and stores_opened % args.rest_every == 0:
                         print(f"    -> respiro {args.rest_seconds:.0f}s (menu aperti={stores_opened})", flush=True)
                         time.sleep(args.rest_seconds)

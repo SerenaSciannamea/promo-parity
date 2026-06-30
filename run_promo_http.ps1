@@ -49,7 +49,7 @@ $maxAttempts = 6
 $scrapeExit  = 1
 for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     Log "Avvio scraper HTTP (tentativo $attempt/$maxAttempts, tutti i poligoni, 3 km, collection=offers)..."
-    & $python $scraper --collection offers 2>&1 | ForEach-Object {
+    & $python $scraper --collection offers --big-cities "ROM" 2>&1 | ForEach-Object {
         $l = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { "$_" }
         Write-Host $l
         Add-Content -Path $log -Value $l -Encoding UTF8
