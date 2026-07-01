@@ -657,10 +657,13 @@ def load_deliveroo_promo_counts() -> pd.DataFrame:
     group_keys = ["city_code", "restaurant_name"]
     if "week_num" in df.columns:
         group_keys.append("week_num")
+    # Conta i PRODOTTI DISTINTI, non le righe: una catena con N filiali ha N copie
+    # dello stesso menu -> le righe si moltiplicano (16 filiali x 3 prodotti = 48),
+    # ma i prodotti in promo distinti sono 3.
     counts = (
         df[promo_mask]
-        .groupby(group_keys)
-        .size()
+        .groupby(group_keys)["product_name"]
+        .nunique()
         .reset_index(name="deliveroo_promo_products")
     )
     return counts
