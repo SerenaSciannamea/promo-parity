@@ -159,7 +159,9 @@ def build_matches(week: str | None = None):
             g_rev.append(round(sold * g_price[i], 2) if (sold is not None and g_price[i]) else None)
 
         roo_by_gi: dict[int, tuple[float, float]] = {}   # gi -> (rank, pct) Deliveroo piu' forte (match AUTO)
+        n_roo = n_auto = 0   # prodotti Deliveroo-in-promo totali / matchati (auto)
         for _, pr in roo_by.get_group((city, dnm)).iterrows():
+            n_roo += 1
             rprice = to_price(pr["product_price"])
             rdisc  = to_price(pr.get("product_price_discounted", ""))
             rpct   = roo_pct(rprice, rdisc)
@@ -179,42 +181,38 @@ def build_matches(week: str | None = None):
             rows.append(_row(city, gnm, dnm, pr, rprice, rdisc, rpct, grow, gap,
                              best[1], mtype, gprice, confirmed))
             if mtype == "auto":
+                n_auto += 1
                 r_rank = rank_deliveroo(pr.get("promotion_type", ""))
                 r_pct  = rpct or extract_pct_deliveroo(pr.get("promotion_type", "")) or 0.0
                 cur = roo_by_gi.get(gi)
                 if cur is None or (r_rank, -r_pct) < (cur[0], -cur[1]):
                     roo_by_gi[gi] = (r_rank, r_pct)
 
-        # ---- Verdetto BILANCIATO sull'unione dei prodotti in promo (peso = revenue Glovo).
-        # Confronto per prodotto con parity_label (RANK-aware: 2x1 vs 2x1 -> PARITY,
-        # 2x1 vs %off -> Glovo vince, ecc.), non solo la %. ----
-        w_g = w_d = w_tie = 0.0
-        n_union = 0
-        for gi in range(len(g)):
-            gp = g_promo[gi]
-            dp = gi in roo_by_gi
-            if not gp and not dp:
-                continue
-            n_union += 1
-            w = g_rev[gi] if g_rev[gi] else (g_price[gi] or 1.0)
-            gr   = g_rank[gi] if gp else NO_PROMO_RANK
-            gpct = g_pct[gi] or 0.0
-            dr, dpct = roo_by_gi[gi] if dp else (NO_PROMO_RANK, 0.0)
-            lab = parity_label(gr, dr, glovo_pct_off=gpct, deliveroo_pct_off=dpct)
-            if lab == "SUPERIORITY":
-                w_g += w
-            elif lab == "INFERIORITY":
-                w_d += w
-            else:                      # PARITY
-                w_tie += w
-        if n_union > 0 and (w_g + w_d + w_tie) > 0:
-            share = (w_g + 0.5 * w_tie) / (w_g + w_d + w_tie)
-            parity = "SUPERIORITY" if share >= 0.60 else ("PARITY" if share >= 0.45 else "INFERIORITY")
-            parity_rows.append({
-                "city_code": city, "glovo_name": gnm, "deliveroo_name": dnm,
-                "n_union_products": n_union, "glovo_rev_share": round(share, 3),
-                "parity_product": parity, "enough": n_union >= MIN_UNION,
-            })
+        # ---- Verdetto PRODUCT-PARITY: solo se TUTTI i prodotti in promo di Deliveroo
+        # sono nel nostro menu (matchati al 100%). Confronto per prodotto con parity_label
+        # (RANK-aware), ancorato sui promo Deliveroo, pesato per revenue Glovo.
+        # Se non tutti matchano -> nessun verdetto product -> fallback store-level. ----
+        if n_roo >= MIN_UNION and n_auto == n_roo and roo_by_gi:
+            w_g = w_d = w_tie = 0.0
+            for gi, (dr, dpct) in roo_by_gi.items():
+                w    = g_rev[gi] if g_rev[gi] else (g_price[gi] or 1.0)
+                gr   = g_rank[gi] if g_promo[gi] else NO_PROMO_RANK
+                gpct = g_pct[gi] or 0.0
+                lab = parity_label(gr, dr, glovo_pct_off=gpct, deliveroo_pct_off=dpct)
+                if lab == "SUPERIORITY":
+                    w_g += w
+                elif lab == "INFERIORITY":
+                    w_d += w
+                else:
+                    w_tie += w
+            if (w_g + w_d + w_tie) > 0:
+                share = (w_g + 0.5 * w_tie) / (w_g + w_d + w_tie)
+                parity = "SUPERIORITY" if share >= 0.60 else ("PARITY" if share >= 0.45 else "INFERIORITY")
+                parity_rows.append({
+                    "city_code": city, "glovo_name": gnm, "deliveroo_name": dnm,
+                    "n_roo_promo": n_roo, "glovo_rev_share": round(share, 3),
+                    "parity_product": parity, "enough": True,
+                })
     con.close()
     return pd.DataFrame(rows, columns=OUT_FIELDS), pd.DataFrame(parity_rows)
 
