@@ -136,9 +136,9 @@ def aggregate_store_level(df: pd.DataFrame, prime_mode: bool = False) -> pd.Data
                   Utile per calcolare la parity dal punto di vista degli utenti Prime.
 
     Logica:
-    - best_promo_type: la promo DOMINANTE dello store = quella presente sul maggior
-      numero di prodotti in promo (ogni prodotto contato per la sua promo piu' forte;
-      a parita' di conteggio vince la piu' forte)
+    - best_promo_type: la promo DOMINANTE dello store = quella che copre la maggior
+      REVENUE dei prodotti in promo (ogni prodotto per la sua promo piu' forte, pesato
+      per revenue = prezzo x venduti; a parita' di revenue vince la piu' forte)
     - avg_pct_off: media di avg_percentage_off per i prodotti in PERCENTAGE_DISCOUNT
     - max_pct_off: massima avg_percentage_off fra i prodotti in PERCENTAGE_DISCOUNT
                    (usata come metrica principale nella parity, simmetrica con Deliveroo)
@@ -198,19 +198,19 @@ def aggregate_store_level(df: pd.DataFrame, prime_mode: bool = False) -> pd.Data
     def agg_store(g: pd.DataFrame) -> pd.Series:
         promo_rows = g[g["has_active_promo"] == "Y"]
 
-        # --- Promo DOMINANTE dello store = quella presente sul MAGGIOR numero di
-        # prodotti in promo. Ogni prodotto conta una volta, rappresentato dalla sua
-        # promo piu' forte (es. un prodotto "PERCENTAGE_DISCOUNT, TWO_FOR_ONE" conta
-        # come TWO_FOR_ONE). A parita' di conteggio vince la promo piu' forte (rank
-        # piu' basso). Cosi' uno store con molti prodotti in %off e pochi in 2x1
-        # resta classificato come %off.
-        rep = (promo_rows["type_of_promo"].apply(_strongest_promo_type)
+        # --- Promo DOMINANTE dello store = quella che copre la MAGGIOR REVENUE dei
+        # prodotti in promo (non il maggior NUMERO). Ogni prodotto e' rappresentato
+        # dalla sua promo piu' forte (es. "PERCENTAGE_DISCOUNT, TWO_FOR_ONE" -> 2x1)
+        # e pesa per la sua revenue (avg_unit_price * total_product_sold). Cosi' un
+        # 2x1 su pochi prodotti ma ad alta revenue vince su tanti %off a bassa revenue.
+        # A parita' di revenue vince la promo piu' forte (rank piu' basso).
+        _pt = (promo_rows["type_of_promo"].apply(_strongest_promo_type)
                if len(promo_rows) > 0 else pd.Series([], dtype=str))
-        rep = rep[rep != ""]
-        if len(rep) > 0:
-            counts    = rep.value_counts()
-            top_n     = counts.max()
-            tied      = [t for t in counts.index if counts[t] == top_n]
+        _valid = _pt != ""
+        if bool(_valid.any()):
+            rev_by_type = promo_rows.loc[_valid, "revenue"].groupby(_pt[_valid]).sum()
+            top_rev   = rev_by_type.max()
+            tied      = [t for t in rev_by_type.index if rev_by_type[t] == top_rev]
             best_type = min(tied, key=lambda t: GLOVO_RANK.get(t, NO_PROMO_RANK))
             best_rank = GLOVO_RANK.get(best_type, NO_PROMO_RANK)
         else:
