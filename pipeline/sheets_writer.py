@@ -110,6 +110,14 @@ def _write_rows_chunked(
         if i + CHUNK_SIZE < len(all_rows):
             time.sleep(1.0)
 
+    # Auto-trim: ridimensiona la griglia ai dati reali. ws.clear() svuota i valori
+    # ma NON rimpicciolisce la griglia -> righe/colonne vuote si accumulano e nel
+    # tempo saturano il limite di 10M celle della workbook. Qui la riportiamo ai dati.
+    try:
+        ws.resize(rows=max(len(all_rows), 1), cols=max(len(headers), 1))
+    except Exception as _e:
+        print(f"    [sheets_writer] resize '{ws.title}' non riuscito: {_e}")
+
     if verify:
         # Pausa per garantire consistenza API
         time.sleep(2.0)

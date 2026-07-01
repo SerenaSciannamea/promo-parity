@@ -49,7 +49,7 @@ $maxAttempts = 6
 $scrapeExit  = 1
 for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     Log "Avvio scraper HTTP (tentativo $attempt/$maxAttempts, tutti i poligoni, 3 km, collection=offers)..."
-    & $python $scraper --collection offers --big-cities "ROM" 2>&1 | ForEach-Object {
+    & $python $scraper --collection offers --big-cities "MIL,ROM" 2>&1 | ForEach-Object {
         $l = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { "$_" }
         Write-Host $l
         Add-Content -Path $log -Value $l -Encoding UTF8
@@ -73,7 +73,11 @@ if ($scrapeExit -eq 0) {
     foreach ($f in $files) { if (Test-Path "$outHttp\$f") { Copy-Item "$outHttp\$f" "$out\$f" -Force; Log "  copiato $f -> output/" } }
     Log "Backup output precedente in: $bdir"
     Log "Avvio pipeline (run_friday.ps1)..."
+    # Flag: durante la pipeline i file dello scraper non si aggiornano -> il watchdog
+    # NON deve scambiarlo per uno stallo. Rimosso a pipeline finita.
+    Set-Content -Path "$proj\data\pipeline_running.flag" -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') -Encoding UTF8
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$proj\run_friday.ps1"
+    Remove-Item -Path "$proj\data\pipeline_running.flag" -Force -ErrorAction SilentlyContinue
     Log "Pipeline terminata (exit $LASTEXITCODE)."
     # Marker di completamento per il watchdog: run di oggi andato a buon fine.
     Set-Content -Path "$proj\data\promo_http_last_success.txt" -Value (Get-Date -Format 'yyyy-MM-dd') -Encoding UTF8

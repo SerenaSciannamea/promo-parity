@@ -22,6 +22,16 @@ if (Test-Path $marker) {
     if ((Get-Content $marker -Raw).Trim() -eq $today) { Log "Run di $today gia' completato -> nulla da fare."; return }
 }
 
+# 1b) pipeline in corso? Durante la pipeline i file dello scraper NON si aggiornano:
+# non va scambiato per uno stallo (era la causa del loop di restart). Guardia
+# anti-flag-orfano: se il flag e' piu' vecchio di 40 min lo ignoro.
+$pflag = "$proj\data\pipeline_running.flag"
+if (Test-Path $pflag) {
+    $ageMin = [int]((Get-Date) - (Get-Item $pflag).LastWriteTime).TotalMinutes
+    if ($ageMin -lt 40) { Log "Pipeline in corso (flag di $ageMin min fa) -> non intervengo."; return }
+    Log "Flag pipeline STALE ($ageMin min) -> lo ignoro e continuo i controlli."
+}
+
 # 2) processi attivi + freschezza output (newest mtime tra i file che lo scraper scrive)
 $pyRunning = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue).Count
 $files = @("deliveroo_promo_raw.csv","deliveroo_sample_status.csv","deliveroo_store_index.csv") |
