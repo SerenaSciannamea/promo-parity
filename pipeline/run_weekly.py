@@ -429,6 +429,24 @@ def run_pipeline(
     print(f"      {matched_count}/{len(glovo_tuples)} store matchati "
           f"({round(matched_count/len(glovo_tuples)*100,1) if glovo_tuples else 0}%)")
 
+    # ---- 4b. Store discovery: recupera match mancati via fingerprint del menu ----
+    # Colleghi Deliveroo NON mappati al loro store Glovo confrontando i prodotti
+    # (nome+prezzo). Auto-merge solo altissima confidenza; il resto va in revisione.
+    try:
+        from pipeline.store_discovery import auto_merge as _sd_auto_merge
+        for _c, _g, _d in _sd_auto_merge():
+            _k = (str(_c).strip(), str(_g).strip())
+            cur = match_map.get(_k)
+            if isinstance(cur, list):
+                if _d not in cur:
+                    cur.append(_d)
+            elif cur:
+                match_map[_k] = [cur, _d]
+            else:
+                match_map[_k] = [_d]
+    except Exception as _sde:
+        print(f"      [store_discovery] saltato: {_sde}")
+
     # ---- 5. Calcola parity ----
     print(f"\n[5/5] Calcolo parity")
 

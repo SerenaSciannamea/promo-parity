@@ -15,7 +15,9 @@
 # ===========================================================================
 from __future__ import annotations
 
+import shutil
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -87,7 +89,60 @@ def discover(week: str | None = None) -> pd.DataFrame:
                           ascending=[True, False, False]) if not df.empty else df
 
 
+def _tnorm(s: str) -> str:
+    """Normalizzazione stretta (senza spazi/punteggiatura): 'S.A.N.O.' -> 'sano'."""
+    return norm(s).replace(" ", "")
+
+
+def auto_merge(week: str | None = None) -> list[tuple[str, str, str]]:
+    """Scopre i match mancanti e UNISCE in automatico solo quelli ad altissima
+    confidenza (nome coincide -> contenimento, oppure prodotti fortissimi).
+    I falsi positivi da nomi diversi restano fuori (revisione).
+    Ritorna la lista (city, glovo_name, deliveroo_name) dei match aggiunti;
+    aggiorna store_mapping.csv (con backup). NON solleva: best-effort."""
+    try:
+        cand = discover(week)
+    except Exception as exc:
+        print(f"    [store_discovery] discover fallito: {exc}")
+        return []
+    if cand.empty:
+        return []
+    mp = pd.read_csv(MAPPING_CSV, dtype=str, encoding="utf-8-sig").fillna("")
+    existing = set(zip(mp["city_code"], mp["glovo_name"], mp["deliveroo_name"]))
+    new_rows, added = [], []
+    for _, r in cand.iterrows():
+        a, b = _tnorm(r["deliveroo_name"]), _tnorm(r["glovo_candidate"])
+        contained = min(len(a), len(b)) >= 4 and (a in b or b in a)
+        strong = float(r["overlap_ratio"]) >= 0.7 and int(r["n_price_confirmed"]) >= 4
+        if not (contained or strong):
+            continue
+        key = (r["city_code"], r["glovo_candidate"], r["deliveroo_name"])
+        if key in existing:
+            continue
+        existing.add(key)
+        new_rows.append({"city_code": r["city_code"], "glovo_name": r["glovo_candidate"],
+                         "glovo_store_id": "", "deliveroo_name": r["deliveroo_name"],
+                         "confidence": "0.95", "source": "auto_fingerprint"})
+        added.append((r["city_code"], r["glovo_candidate"], r["deliveroo_name"]))
+    if new_rows:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        shutil.copy2(MAPPING_CSV, MAPPING_CSV.parent / f"store_mapping_backup_{ts}.csv")
+        mp2 = pd.concat([mp, pd.DataFrame(new_rows)], ignore_index=True) \
+                .drop_duplicates(["city_code", "glovo_name", "deliveroo_name"], keep="first")
+        mp2.to_csv(MAPPING_CSV, index=False, encoding="utf-8-sig")
+    print(f"    [store_discovery] auto-merge: +{len(added)} match aggiunti al mapping "
+          f"({len(cand) - len(added)} candidati incerti in revisione)")
+    return added
+
+
 def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--merge", action="store_true", help="unisce in automatico i match ad alta confidenza")
+    args = ap.parse_args()
+    if args.merge:
+        auto_merge()
+        return
     df = discover()
     print(f"Candidati store scoperti: {len(df)}")
     if not df.empty:
