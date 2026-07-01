@@ -25,6 +25,10 @@ from pathlib import Path
 import pandas as pd
 from rapidfuzz import fuzz, process as rfp
 
+from pipeline.promo_ranker import (
+    rank_glovo, rank_deliveroo, parity_label, extract_pct_deliveroo, NO_PROMO_RANK,
+)
+
 BASE_DIR     = Path(__file__).resolve().parent.parent
 DB_PATH      = BASE_DIR / "data" / "promo_parity.db"
 MAPPING_CSV  = BASE_DIR / "data" / "store_mapping.csv"
@@ -136,7 +140,7 @@ def build_matches(week: str | None = None):
         if not dnm or (city, dnm) not in roo_by.groups:
             continue
         g = pd.read_sql(
-            "SELECT DISTINCT product_name, has_active_promo, avg_percentage_off, avg_unit_price, total_product_sold "
+            "SELECT DISTINCT product_name, has_active_promo, type_of_promo, avg_percentage_off, avg_unit_price, total_product_sold "
             "FROM glovo_products WHERE city_code=? AND store_name=? AND week_num=?",
             con, params=[city, gnm, week],
         )
@@ -146,12 +150,15 @@ def build_matches(week: str | None = None):
         g_price = [to_price(x) for x in g["avg_unit_price"]]
         g_promo = [str(x).upper().startswith("Y") for x in g["has_active_promo"]]
         g_pct   = [to_price(x) if str(x).strip() else None for x in g["avg_percentage_off"]]
+        # rank promo per prodotto Glovo (2x1=1, %off=2, basket=3, no-promo=6)
+        g_rank  = [rank_glovo(str(t), "Y") if p else NO_PROMO_RANK
+                   for t, p in zip(g["type_of_promo"], g_promo)]
         g_rev   = []
         for i in range(len(g)):
             sold = to_price(g.iloc[i]["total_product_sold"])
             g_rev.append(round(sold * g_price[i], 2) if (sold is not None and g_price[i]) else None)
 
-        roo_pct_by_gi: dict[int, float] = {}   # gi -> miglior % Deliveroo (solo match AUTO) = "Deliveroo promuove questo prodotto"
+        roo_by_gi: dict[int, tuple[float, float]] = {}   # gi -> (rank, pct) Deliveroo piu' forte (match AUTO)
         for _, pr in roo_by.get_group((city, dnm)).iterrows():
             rprice = to_price(pr["product_price"])
             rdisc  = to_price(pr.get("product_price_discounted", ""))
@@ -172,29 +179,36 @@ def build_matches(week: str | None = None):
             rows.append(_row(city, gnm, dnm, pr, rprice, rdisc, rpct, grow, gap,
                              best[1], mtype, gprice, confirmed))
             if mtype == "auto":
-                roo_pct_by_gi[gi] = max(roo_pct_by_gi.get(gi, 0.0), rpct or 0.0)
+                r_rank = rank_deliveroo(pr.get("promotion_type", ""))
+                r_pct  = rpct or extract_pct_deliveroo(pr.get("promotion_type", "")) or 0.0
+                cur = roo_by_gi.get(gi)
+                if cur is None or (r_rank, -r_pct) < (cur[0], -cur[1]):
+                    roo_by_gi[gi] = (r_rank, r_pct)
 
-        # ---- Verdetto BILANCIATO sull'unione dei prodotti in promo (peso = revenue Glovo) ----
-        w_g = w_d = 0.0
+        # ---- Verdetto BILANCIATO sull'unione dei prodotti in promo (peso = revenue Glovo).
+        # Confronto per prodotto con parity_label (RANK-aware: 2x1 vs 2x1 -> PARITY,
+        # 2x1 vs %off -> Glovo vince, ecc.), non solo la %. ----
+        w_g = w_d = w_tie = 0.0
         n_union = 0
         for gi in range(len(g)):
             gp = g_promo[gi]
-            dp = gi in roo_pct_by_gi
+            dp = gi in roo_by_gi
             if not gp and not dp:
                 continue
             n_union += 1
             w = g_rev[gi] if g_rev[gi] else (g_price[gi] or 1.0)
-            if gp and dp:
-                if (g_pct[gi] or 0) >= roo_pct_by_gi[gi]:
-                    w_g += w
-                else:
-                    w_d += w
-            elif gp:
-                w_g += w           # promo solo-Glovo -> punto Glovo
-            else:
-                w_d += w           # promo solo-Deliveroo -> punto Deliveroo
-        if n_union > 0 and (w_g + w_d) > 0:
-            share = w_g / (w_g + w_d)
+            gr   = g_rank[gi] if gp else NO_PROMO_RANK
+            gpct = g_pct[gi] or 0.0
+            dr, dpct = roo_by_gi[gi] if dp else (NO_PROMO_RANK, 0.0)
+            lab = parity_label(gr, dr, glovo_pct_off=gpct, deliveroo_pct_off=dpct)
+            if lab == "SUPERIORITY":
+                w_g += w
+            elif lab == "INFERIORITY":
+                w_d += w
+            else:                      # PARITY
+                w_tie += w
+        if n_union > 0 and (w_g + w_d + w_tie) > 0:
+            share = (w_g + 0.5 * w_tie) / (w_g + w_d + w_tie)
             parity = "SUPERIORITY" if share >= 0.60 else ("PARITY" if share >= 0.45 else "INFERIORITY")
             parity_rows.append({
                 "city_code": city, "glovo_name": gnm, "deliveroo_name": dnm,
