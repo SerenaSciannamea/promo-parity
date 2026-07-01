@@ -208,6 +208,10 @@ def init_db(conn: sqlite3.Connection) -> None:
         ("store_parity",      "deliveroo_min_basket","REAL"),
         ("store_parity_prime","glovo_min_basket",    "REAL"),
         ("store_parity_prime","deliveroo_min_basket","REAL"),
+        ("store_parity",      "deliveroo_stores_pct",  "REAL"),
+        ("store_parity",      "deliveroo_stores_frac", "TEXT"),
+        ("store_parity_prime","deliveroo_stores_pct",  "REAL"),
+        ("store_parity_prime","deliveroo_stores_frac", "TEXT"),
     ]
     for _tbl, _col, _typedef in _migrations:
         try:
@@ -425,6 +429,24 @@ def run_pipeline(
     print(f"      {matched_count}/{len(glovo_tuples)} store matchati "
           f"({round(matched_count/len(glovo_tuples)*100,1) if glovo_tuples else 0}%)")
 
+    # ---- 4b. Store discovery: recupera match mancati via fingerprint del menu ----
+    # Colleghi Deliveroo NON mappati al loro store Glovo confrontando i prodotti
+    # (nome+prezzo). Auto-merge solo altissima confidenza; il resto va in revisione.
+    try:
+        from pipeline.store_discovery import auto_merge as _sd_auto_merge
+        for _c, _g, _d in _sd_auto_merge():
+            _k = (str(_c).strip(), str(_g).strip())
+            cur = match_map.get(_k)
+            if isinstance(cur, list):
+                if _d not in cur:
+                    cur.append(_d)
+            elif cur:
+                match_map[_k] = [cur, _d]
+            else:
+                match_map[_k] = [_d]
+    except Exception as _sde:
+        print(f"      [store_discovery] saltato: {_sde}")
+
     # ---- 5. Calcola parity ----
     print(f"\n[5/5] Calcolo parity")
 
@@ -617,6 +639,16 @@ def run_pipeline(
                            "product_description", "product_price", "promotion_type"]
                 dp_cols_present = [c for c in dp_cols if c in deliveroo_products_raw.columns]
                 deliveroo_products = deliveroo_products_raw[dp_cols_present] if dp_cols_present else None
+                # Dedup: le catene hanno N filiali con lo STESSO menu -> righe prodotto
+                # duplicate (16 filiali x 3 prodotti = 48). Teniamo 1 riga per
+                # (citta', store, settimana, prodotto) -> conteggi corretti + meno celle.
+                if deliveroo_products is not None:
+                    _dk = [c for c in ["city_code", "restaurant_name", "week_num", "product_name"]
+                           if c in deliveroo_products.columns]
+                    if _dk:
+                        _n0 = len(deliveroo_products)
+                        deliveroo_products = deliveroo_products.drop_duplicates(_dk, keep="first")
+                        print(f"    [deliveroo_products] dedup filiali: {_n0} -> {len(deliveroo_products)} righe")
             else:
                 deliveroo_products = None
             _priority_df = quality_report.priority_actions if quality_report is not None else None
