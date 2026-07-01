@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from rapidfuzz import fuzz
 
 from pipeline.product_matcher import norm, norm_product, to_price, DB_PATH, MAPPING_CSV, ROO_PRODUCTS
 
@@ -28,21 +29,30 @@ OUT = Path(__file__).resolve().parent.parent / "data" / "store_discovery_candida
 
 MIN_PRODUCTS = 4      # store Deliveroo con almeno N prodotti in promo
 PRICE_TOL    = 0.05   # |gap| <= -> prezzo confermato
+NAME_FUZZY   = 80     # tolleranza nome prodotto: se il PREZZO coincide e il nome e'
+                      # >= questa similarita', conta come stesso prodotto (piccole
+                      # differenze: ordine parole, 'all'', singolare/plurale, refusi)
 OUT_FIELDS = ["city_code", "deliveroo_name", "glovo_candidate", "n_overlap",
               "n_price_confirmed", "overlap_ratio", "roo_products", "confidence"]
 
 
 def _glovo_index(con, city: str, week: str):
-    """norm(product_name) -> list[(store_name, price)] per la citta'."""
+    """Due indici per la citta':
+       name_idx:  norm_product(name) -> [(store, price)]      (match esatto nome)
+       price_idx: euro arrotondato    -> [(store, norm, price)] (match prezzo + nome fuzzy)"""
     g = pd.read_sql(
         "SELECT DISTINCT store_name, product_name, avg_unit_price "
         "FROM glovo_products WHERE city_code=? AND week_num=?",
         con, params=[city, week],
     )
-    idx: dict[str, list[tuple[str, float | None]]] = {}
+    name_idx: dict[str, list[tuple[str, float | None]]] = {}
+    price_idx: dict[int, list[tuple[str, str, float]]] = {}
     for s, p, pr in zip(g.store_name, g.product_name, g.avg_unit_price):
-        idx.setdefault(norm_product(p), []).append((s, to_price(pr)))
-    return idx
+        n = norm_product(p); price = to_price(pr)
+        name_idx.setdefault(n, []).append((s, price))
+        if price is not None:
+            price_idx.setdefault(int(round(price)), []).append((s, n, price))
+    return name_idx, price_idx
 
 
 def discover(week: str | None = None) -> pd.DataFrame:
@@ -59,14 +69,27 @@ def discover(week: str | None = None) -> pd.DataFrame:
     for (city, dnm), grp in roo.groupby(["city_code", "restaurant_name"]):
         if (city, dnm) in mapped or len(grp) < MIN_PRODUCTS:
             continue
-        idx = idx_cache.setdefault(city, _glovo_index(con, city, week))
+        name_idx, price_idx = idx_cache.setdefault(city, _glovo_index(con, city, week))
         cand: dict[str, dict] = {}
         for pname, pprice in zip(grp.product_name, grp.product_price):
             nm, rpr = norm_product(pname), to_price(pprice)
-            for gstore, gpr in idx.get(nm, []):
+            hits: dict[str, bool] = {}   # store -> prezzo_confermato (per QUESTO prodotto)
+            # 1) match esatto sul nome
+            for gstore, gpr in name_idx.get(nm, []):
+                ok = bool(rpr and gpr and abs(rpr - gpr) / max(rpr, gpr) <= PRICE_TOL)
+                hits[gstore] = hits.get(gstore, False) or ok
+            # 2) tolleranza: prezzo vicino + nome FUZZY simile (piccole differenze di nome)
+            if rpr is not None:
+                for b in (int(round(rpr)) - 1, int(round(rpr)), int(round(rpr)) + 1):
+                    for gstore, gn, gpr in price_idx.get(b, []):
+                        if gstore in hits:
+                            continue
+                        if abs(rpr - gpr) / max(rpr, gpr) <= PRICE_TOL and fuzz.token_sort_ratio(nm, gn) >= NAME_FUZZY:
+                            hits[gstore] = True   # confermato dal prezzo per costruzione
+            for gstore, ok in hits.items():
                 c = cand.setdefault(gstore, {"ov": 0, "pc": 0})
                 c["ov"] += 1
-                if rpr and gpr and abs(rpr - gpr) / max(rpr, gpr) <= PRICE_TOL:
+                if ok:
                     c["pc"] += 1
         if not cand:
             continue
