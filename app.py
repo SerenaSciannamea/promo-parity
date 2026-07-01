@@ -1964,6 +1964,21 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
         elif _parity_val in ("UNMATCHED", "EXCLUSIVE_GLOVO", "NOT_ON_DELIVEROO"):
             dp = dp.iloc[0:0]        # store solo su Glovo -> nessun Deliveroo matchato
 
+        # Filiale rappresentativa: mostra solo i prodotti con la promo usata nel confronto
+        # (quella in >=meta' delle filiali) -> niente menu misti 20%/40% ne' prodotti
+        # "moltiplicati". Le altre promo/filiali restano visibili in didascalia (punto 2).
+        _roo_promo = str(latest.get("deliveroo_promo_text", "")).strip()
+        if _roo_promo and not dp.empty and "promotion_type" in dp.columns:
+            _pt    = dp["promotion_type"].astype(str).str.strip()
+            _same  = dp[_pt == _roo_promo]
+            _other = sorted(p for p in set(_pt) - {_roo_promo, ""})
+            if not _same.empty:
+                dp = _same
+                if _other:
+                    st.caption(f"ℹ️ Deliveroo — confronto sulla promo presente in ≥metà "
+                               f"filiali (**{_roo_promo}**). Altre filiali offrono: "
+                               f"{', '.join(_other)}.")
+
         # [E] Vista Prime: carica anche i dati prime per colonna aggiuntiva
         if prime:
             gpp = load_glovo_products_prime(city_code, sel_store, week_nm)

@@ -78,10 +78,12 @@ def compute_store_parity(
     rows = []
 
     # Indice Deliveroo: (city_code, restaurant_name_lower) -> info promo.
-    # Il deduped puo' avere piu' righe per (citta', nome): promo DIVERSE sullo stesso nome.
-    # Qui teniamo la promo PIU' FORTE (rank minore, poi pct maggiore) = confronto col competitor
-    # piu' aggressivo (punto 4). Portiamo anche % filiali con quella promo (punto 5).
-    deliv_index: dict[tuple[str, str], dict] = {}
+    # Il deduped ha piu' righe per (citta', nome) quando le FILIALI hanno promo diverse.
+    # Confronto = promo piu' FORTE presente in ALMENO META' delle filiali (stores_pct>=50):
+    # cosi' un outlier di 1 sola filiale (es. 40% su 3) non crea una inferiority falsa.
+    # Se nessuna raggiunge il 50% -> la piu' COMUNE (poi la piu' forte). Dati vecchi senza
+    # stores_pct -> ricade sulla piu' forte (retro-compatibile).
+    _deliv_all: dict[tuple[str, str], list[dict]] = {}
     if deliveroo_deduped is not None and len(deliveroo_deduped) > 0:
         for _, r in deliveroo_deduped.iterrows():
             city = str(r.get("city_code", "")).strip()
@@ -93,12 +95,17 @@ def compute_store_parity(
             n_tot  = int(pd.to_numeric(r.get("n_stores_total"), errors="coerce") or 0)
             spct   = pd.to_numeric(r.get("stores_pct"), errors="coerce")
             spct   = float(spct) if pd.notna(spct) else (round(100 * n_with / n_tot) if n_tot else 0.0)
-            key = (city, name.lower())
-            cur = deliv_index.get(key)
-            cand = {"promo": promo, "rank": rk, "pct": pc,
-                    "n_with": n_with, "n_tot": n_tot, "stores_pct": spct}
-            if cur is None or (rk, -pc) < (cur["rank"], -cur["pct"]):
-                deliv_index[key] = cand
+            _deliv_all.setdefault((city, name.lower()), []).append(
+                {"promo": promo, "rank": rk, "pct": pc,
+                 "n_with": n_with, "n_tot": n_tot, "stores_pct": spct})
+
+    deliv_index: dict[tuple[str, str], dict] = {}
+    for key, cands in _deliv_all.items():
+        widespread = [c for c in cands if c["stores_pct"] >= 50]
+        if widespread:                       # la piu' forte tra le diffuse (>=50% filiali)
+            deliv_index[key] = min(widespread, key=lambda c: (c["rank"], -c["pct"]))
+        else:                                # nessuna diffusa -> la piu' comune, poi la piu' forte
+            deliv_index[key] = min(cands, key=lambda c: (-c["stores_pct"], c["rank"], -c["pct"]))
 
     for _, row in glovo_store.iterrows():
         city        = str(row["city_code"]).strip()
