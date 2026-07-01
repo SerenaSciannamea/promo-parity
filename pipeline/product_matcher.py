@@ -118,11 +118,16 @@ def _best_candidate(q_norm: str, q_price: float | None,
     return near[0]
 
 
-def build_matches(week: str | None = None):
+_GCOLS = ["product_name", "has_active_promo", "type_of_promo",
+          "avg_percentage_off", "avg_unit_price", "total_product_sold"]
+
+
+def build_matches(week: str | None = None, glovo_df: pd.DataFrame | None = None):
     """Ritorna (match_df, parity_df).
     match_df  : 1 riga per prodotto Deliveroo-in-promo (match/review/unmatched) -> drill-down.
-    parity_df : 1 riga per store con verdetto product-based BILANCIATO (unione promo,
-                pesata per revenue Glovo) + copertura per la soglia di sostituzione.
+    parity_df : 1 riga per store con verdetto product-parity (100% promo Deliveroo matchati).
+    glovo_df  : prodotti Glovo PER-PRODOTTO di QUESTA settimana (city_code, store_name + _GCOLS);
+                se passato, usa quello (dati freschi) invece del DB (che ha la settimana prima).
     """
     mp = pd.read_csv(MAPPING_CSV, dtype=str, encoding="utf-8-sig").fillna("")
     roo = pd.read_csv(ROO_PRODUCTS, dtype=str).fillna("")
@@ -132,6 +137,14 @@ def build_matches(week: str | None = None):
     if not week:
         week = pd.read_sql("SELECT MAX(week_num) w FROM glovo_products", con)["w"][0]
 
+    g_groups = None
+    if glovo_df is not None and not glovo_df.empty:
+        _gd = glovo_df.copy()
+        for c in _GCOLS:
+            if c not in _gd.columns:
+                _gd[c] = ""
+        g_groups = _gd.groupby(["city_code", "store_name"])
+
     roo_by = roo.groupby(["city_code", "restaurant_name"])
     rows: list[dict] = []
     parity_rows: list[dict] = []
@@ -139,11 +152,15 @@ def build_matches(week: str | None = None):
         city, gnm, dnm = m["city_code"], m["glovo_name"], m["deliveroo_name"]
         if not dnm or (city, dnm) not in roo_by.groups:
             continue
-        g = pd.read_sql(
-            "SELECT DISTINCT product_name, has_active_promo, type_of_promo, avg_percentage_off, avg_unit_price, total_product_sold "
-            "FROM glovo_products WHERE city_code=? AND store_name=? AND week_num=?",
-            con, params=[city, gnm, week],
-        )
+        if g_groups is not None:
+            g = (g_groups.get_group((city, gnm))[_GCOLS].drop_duplicates()
+                 if (city, gnm) in g_groups.groups else pd.DataFrame(columns=_GCOLS))
+        else:
+            g = pd.read_sql(
+                "SELECT DISTINCT product_name, has_active_promo, type_of_promo, avg_percentage_off, avg_unit_price, total_product_sold "
+                "FROM glovo_products WHERE city_code=? AND store_name=? AND week_num=?",
+                con, params=[city, gnm, week],
+            )
         if g.empty:
             continue
         g_norm  = [norm_product(x) for x in g["product_name"]]

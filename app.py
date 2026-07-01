@@ -1859,6 +1859,10 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
         with c1:
             latest = latest_src.iloc[-1]
             st.metric("Parity attuale", parity_badge(latest["parity"]))
+            if str(latest.get("parity_basis", "store")).strip() == "product":
+                st.caption("📦 Confronto per **prodotto** (tutti i promo Deliveroo sono nel menu Glovo)")
+            else:
+                st.caption("🏪 Confronto a livello **store** (promo dominante per revenue)")
             st.metric("Glovo promo", latest.get("glovo_rank_label", "—"))
             st.metric("Deliveroo promo", latest.get("deliveroo_rank_label", "—"))
         with c2:

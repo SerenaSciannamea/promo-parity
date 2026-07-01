@@ -212,6 +212,8 @@ def init_db(conn: sqlite3.Connection) -> None:
         ("store_parity",      "deliveroo_stores_frac", "TEXT"),
         ("store_parity_prime","deliveroo_stores_pct",  "REAL"),
         ("store_parity_prime","deliveroo_stores_frac", "TEXT"),
+        ("store_parity",      "parity_basis", "TEXT DEFAULT 'store'"),
+        ("store_parity_prime","parity_basis", "TEXT DEFAULT 'store'"),
     ]
     for _tbl, _col, _typedef in _migrations:
         try:
@@ -467,6 +469,32 @@ def run_pipeline(
     print(f"      Exclusive Glovo: {len(exclusive_glovo_set)} | Non su Deliveroo: {len(not_on_deliveroo_set)} store")
 
     store_parity = compute_store_parity(glovo_store, deliveroo_df, match_map, exclusive_glovo_set, not_on_deliveroo_set)
+
+    # ---- 5a. Product-parity: dove TUTTI i promo Deliveroo sono nel nostro menu (matchati
+    # al 100%, >=3), il verdetto per-prodotto SOSTITUISCE quello store-level. Altrove
+    # (o categorie strutturali) resta lo store-level. Colonna parity_basis = product/store.
+    store_parity["parity_basis"] = "store"
+    try:
+        from pipeline.product_matcher import build_matches as _pm_build
+        _pp = _pm_build(glovo_df=glovo_raw)[1]
+        if _pp is not None and len(_pp) > 0:
+            _r = {"INFERIORITY": 0, "PARITY": 1, "SUPERIORITY": 2}   # 1:N -> tieni il peggiore per Glovo
+            _pp = _pp.assign(_r=_pp["parity_product"].map(_r)).sort_values("_r")
+            _pv = {(str(c).strip(), str(gn).strip()): v
+                   for (c, gn), v in _pp.groupby(["city_code", "glovo_name"]).first()["parity_product"].items()}
+            _STRUCT = {"SUPERIORITY", "PARITY", "INFERIORITY"}
+
+            def _apply_pp(row):
+                pv = _pv.get((str(row["city_code"]).strip(), str(row["glovo_name"]).strip()))
+                if pv and row["parity"] in _STRUCT:
+                    return pd.Series([pv, "product"])
+                return pd.Series([row["parity"], "store"])
+            store_parity[["parity", "parity_basis"]] = store_parity.apply(_apply_pp, axis=1)
+            print(f"      product-parity applicato a {(store_parity['parity_basis'] == 'product').sum()} store "
+                  f"(100% promo Deliveroo nel menu Glovo)")
+    except Exception as _ppe:
+        print(f"      [product-parity] saltato: {_ppe}")
+
     city_parity  = compute_city_parity(store_parity)
 
     sup  = (store_parity["parity"] == "SUPERIORITY").sum()
@@ -479,6 +507,7 @@ def run_pipeline(
 
     # ---- 5b. Calcola parity Prime (prime-first) ----
     store_parity_prime = compute_store_parity(glovo_store_prime, deliveroo_df, match_map, exclusive_glovo_set, not_on_deliveroo_set)
+    store_parity_prime["parity_basis"] = "store"   # il product-parity si applica alla vista standard
     city_parity_prime  = compute_city_parity(store_parity_prime)
 
     sup_p = (store_parity_prime["parity"] == "SUPERIORITY").sum()
