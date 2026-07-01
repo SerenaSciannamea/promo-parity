@@ -1955,6 +1955,15 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
         gp = load_glovo_products(city_code, sel_store, week_nm)
         dp = load_deliveroo_products(city_code, deliveroo_nm, week_nm)
 
+        # Se lo store NON è realmente matchato tra le piattaforme, non mostrare i
+        # prodotti dell'altra piattaforma: verrebbero cercati per NOME e apparterrebbero
+        # a uno store DIVERSO con lo stesso nome (fuorviante).
+        _parity_val = str(latest.get("parity", "")).upper()
+        if _parity_val == "NOT_ON_GLOVO":
+            gp = gp.iloc[0:0]        # store solo su Deliveroo -> nessun Glovo matchato
+        elif _parity_val in ("UNMATCHED", "EXCLUSIVE_GLOVO", "NOT_ON_DELIVEROO"):
+            dp = dp.iloc[0:0]        # store solo su Glovo -> nessun Deliveroo matchato
+
         # [E] Vista Prime: carica anche i dati prime per colonna aggiuntiva
         if prime:
             gpp = load_glovo_products_prime(city_code, sel_store, week_nm)

@@ -53,6 +53,16 @@ def norm(s: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", s)).strip()
 
 
+# Codice prodotto iniziale, specifico per piattaforma (Glovo 'K012 -', Deliveroo 'N35 -'):
+# va tolto o lo stesso prodotto non matcha mai tra le due piattaforme.
+_PRODUCT_CODE = re.compile(r"^\s*[a-z]{0,3}\d+\s*[-–—.:]\s*", re.I)
+
+
+def norm_product(s: str) -> str:
+    """Normalizza un NOME PRODOTTO togliendo il codice iniziale ('K012 - Miura' -> 'miura')."""
+    return norm(_PRODUCT_CODE.sub("", str(s).strip()))
+
+
 def to_price(s) -> float | None:
     s = re.sub(r"[^0-9.,]", "", str(s))
     if not s:
@@ -132,7 +142,7 @@ def build_matches(week: str | None = None):
         )
         if g.empty:
             continue
-        g_norm  = [norm(x) for x in g["product_name"]]
+        g_norm  = [norm_product(x) for x in g["product_name"]]
         g_price = [to_price(x) for x in g["avg_unit_price"]]
         g_promo = [str(x).upper().startswith("Y") for x in g["has_active_promo"]]
         g_pct   = [to_price(x) if str(x).strip() else None for x in g["avg_percentage_off"]]
@@ -146,7 +156,7 @@ def build_matches(week: str | None = None):
             rprice = to_price(pr["product_price"])
             rdisc  = to_price(pr.get("product_price_discounted", ""))
             rpct   = roo_pct(rprice, rdisc)
-            best = _best_candidate(norm(pr["product_name"]), rprice, g_norm, g_price)
+            best = _best_candidate(norm_product(pr["product_name"]), rprice, g_norm, g_price)
             if not best or best[1] < NAME_MIN:
                 rows.append(_row(city, gnm, dnm, pr, rprice, rdisc, rpct,
                                  None, None, best[1] if best else 0, "unmatched"))

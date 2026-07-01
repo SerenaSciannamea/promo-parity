@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from pipeline.product_matcher import norm, to_price, DB_PATH, MAPPING_CSV, ROO_PRODUCTS
+from pipeline.product_matcher import norm, norm_product, to_price, DB_PATH, MAPPING_CSV, ROO_PRODUCTS
 
 OUT = Path(__file__).resolve().parent.parent / "data" / "store_discovery_candidates.csv"
 
@@ -41,7 +41,7 @@ def _glovo_index(con, city: str, week: str):
     )
     idx: dict[str, list[tuple[str, float | None]]] = {}
     for s, p, pr in zip(g.store_name, g.product_name, g.avg_unit_price):
-        idx.setdefault(norm(p), []).append((s, to_price(pr)))
+        idx.setdefault(norm_product(p), []).append((s, to_price(pr)))
     return idx
 
 
@@ -62,7 +62,7 @@ def discover(week: str | None = None) -> pd.DataFrame:
         idx = idx_cache.setdefault(city, _glovo_index(con, city, week))
         cand: dict[str, dict] = {}
         for pname, pprice in zip(grp.product_name, grp.product_price):
-            nm, rpr = norm(pname), to_price(pprice)
+            nm, rpr = norm_product(pname), to_price(pprice)
             for gstore, gpr in idx.get(nm, []):
                 c = cand.setdefault(gstore, {"ov": 0, "pc": 0})
                 c["ov"] += 1
