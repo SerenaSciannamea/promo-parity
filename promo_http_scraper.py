@@ -502,11 +502,19 @@ def write_deduped(raw_csv: Path, ded_csv: Path, idx_csv: Path | None = None) -> 
             if key not in grouped:
                 grouped[key] = {"city_code": city, "restaurant_name": name,
                                 "promotion_type": promo, "name_norm": nm, "urls": set()}
-            grouped[key]["urls"].add(url or name)
+            # canonicalizza: togli i query-param (?day=&geohash=&time=...). La stessa
+            # filiale ri-aperta nei restart genera URL "diversi" per soli parametri ->
+            # gonfierebbe il conteggio filiali (causa dei famigerati 143% = 10/7).
+            canon = (url.split("?", 1)[0] or name)
+            grouped[key]["urls"].add(canon)
     rows = []
     for g in grouped.values():
         n_with = len(g["urls"])
         n_tot = totals.get((g["city_code"], g["name_norm"]), 0) or n_with
+        # cap di sicurezza: le filiali con la promo sono un SOTTOINSIEME delle filiali
+        # totali; non puo' superare il 100% (chiavi index/raw non sempre allineate).
+        if n_tot and n_with > n_tot:
+            n_with = n_tot
         pct = round(100 * n_with / n_tot) if n_tot else 0
         rows.append({"city_code": g["city_code"], "restaurant_name": g["restaurant_name"],
                      "promotion_type": g["promotion_type"], "n_stores_with_promo": n_with,
