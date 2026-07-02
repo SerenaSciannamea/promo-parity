@@ -1372,7 +1372,7 @@ def tab_city_parity(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
 # Colonne per brand nella tabella store detail (match sul nome rinominato)
 _SD_GLOVO_COLS = {
     "Glovo Restaurant", "Glovo Promo Type", "Glovo % OFF",
-    "Glovo Items in Promo", "Glovo Promo Coverage",
+    "Glovo Items in Promo", "Glovo Promo Coverage", "Glovo AoV",
 }
 _SD_DELIVEROO_COLS = {
     "Deliveroo Restaurant", "Deliveroo Promo Type", "Deliveroo % OFF",
@@ -1682,7 +1682,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
     display_cols = [
         "city_code", "glovo_name", "deliveroo_name", "week_num",
         "parity",
-        "glovo_rank_label", "glovo_pct_off", "glovo_min_basket", "glovo_promo_products",
+        "glovo_rank_label", "glovo_pct_off", "glovo_min_basket", "glovo_promo_products", "glovo_aov",
         "deliveroo_rank_label", "deliveroo_promo_text", "deliveroo_pct_off", "deliveroo_min_basket", "deliveroo_promo_products",
         "deliveroo_stores_pct", "deliveroo_stores_frac",
         "revenue", "promo_coverage_pct"
@@ -1747,6 +1747,9 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
     if "promo_coverage_pct" in disp.columns:
         disp["promo_coverage_pct"] = pd.to_numeric(disp["promo_coverage_pct"], errors="coerce") \
             .apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
+    if "glovo_aov" in disp.columns:
+        disp["glovo_aov"] = pd.to_numeric(disp["glovo_aov"], errors="coerce") \
+            .apply(lambda x: f"{x:,.2f}€".replace(",", "@").replace(".", ",").replace("@", ".") if pd.notna(x) else "")
 
     # Colonna Deliveroo % OFF — usa quella già presente nel df (dal parity_calculator)
     # oppure la estrae dal testo promo (fallback per dati vecchi senza la colonna)
@@ -1789,6 +1792,7 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
         "glovo_rank_label":        "Glovo Promo Type",
         "glovo_pct_off":           "Glovo % OFF",
         "glovo_promo_products":    "Glovo Items in Promo",
+        "glovo_aov":               "Glovo AoV",
         "deliveroo_rank_label":    "Deliveroo Promo Type",
         "deliveroo_pct_off":       "Deliveroo % OFF",
         "deliveroo_promo_products":"Deliveroo Items in Promo",
@@ -1869,6 +1873,8 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
             st.metric("Revenue settimana", f"€ {latest['revenue']:.0f}")
             st.metric("Prodotti in promo", int(latest.get("glovo_promo_products", 0)))
             st.metric("Copertura promo", f"{latest.get('promo_coverage_pct', 0):.1f}%")
+            _aov = pd.to_numeric(latest.get("glovo_aov"), errors="coerce")
+            st.metric("Glovo AoV", f"€ {_aov:.2f}" if pd.notna(_aov) else "—")
 
         # [C] Badge confronto Standard vs Prime nel drill-down
         if prime and _std_latest is not None:

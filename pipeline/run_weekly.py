@@ -214,6 +214,8 @@ def init_db(conn: sqlite3.Connection) -> None:
         ("store_parity_prime","deliveroo_stores_frac", "TEXT"),
         ("store_parity",      "parity_basis", "TEXT DEFAULT 'store'"),
         ("store_parity_prime","parity_basis", "TEXT DEFAULT 'store'"),
+        ("store_parity",      "glovo_aov", "REAL"),
+        ("store_parity_prime","glovo_aov", "REAL"),
     ]
     for _tbl, _col, _typedef in _migrations:
         try:
@@ -414,6 +416,57 @@ def run_pipeline(
         am_mapping_df = pd.read_csv(_am_mapping_path, dtype=str).fillna("")
         print(f"[AM] Mapping caricato da file locale: {len(am_mapping_df)} store")
 
+    # ---- 3c. Scarica AOV partner (Glovo) dalla tab "AOV" del foglio sorgente ----
+    # (city, store, week) -> AOV medio partner. Alimenta sia la regola AOV-upgrade
+    # (soglia non-barriera) sia la colonna "Glovo AoV" in app.
+    aov_map: dict[tuple[str, str, str], float] = {}
+    _aov_path = ROOT / "data" / "glovo_aov.csv"
+    _wk_num = week.split("W")[-1].lstrip("0") or week.split("W")[-1]  # "2026-W27" -> "27"
+    if sheets_id and sheets_sa:
+        try:
+            import json as _json3
+            import gspread as _gs3
+            from google.oauth2.service_account import Credentials as _Creds3
+            _scopes3 = ["https://spreadsheets.google.com/feeds",
+                        "https://www.googleapis.com/auth/drive"]
+            _sa3 = _json3.load(open(sheets_sa, encoding="utf-8")) \
+                   if isinstance(sheets_sa, (str, Path)) else dict(sheets_sa)
+            _creds3  = _Creds3.from_service_account_info(_sa3, scopes=_scopes3)
+            _client3 = _gs3.authorize(_creds3)
+            _aov_sh  = _client3.open_by_key(_GLOVO_SOURCE_SHEET_ID)
+            _aov_ws  = _aov_sh.worksheet("AOV")
+            _aov_raw = pd.DataFrame(_aov_ws.get_all_records(default_blank=""))
+            if not _aov_raw.empty:
+                _aov_raw = _aov_raw.rename(columns={
+                    "order_descriptors_order_city_code": "city_code",
+                    "order_descriptors_store_name": "store_name",
+                    "order_descriptors_average_total_purchase_eur": "aov",
+                    "WEEK NUM": "week_src",
+                })
+                _aov_raw["aov"] = pd.to_numeric(_aov_raw["aov"], errors="coerce")
+                _aov_raw = _aov_raw.dropna(subset=["aov"])
+                # Tieni solo la settimana corrente (se presente), altrimenti tutto
+                _cur = _aov_raw[_aov_raw["week_src"].astype(str).str.strip() == str(_wk_num)]
+                _aov_cur = _cur if len(_cur) else _aov_raw
+                _aov_cur = _aov_cur.drop_duplicates(subset=["city_code", "store_name"], keep="last")
+                _aov_cur[["city_code", "store_name", "aov"]].to_csv(
+                    _aov_path, index=False, encoding="utf-8-sig")
+                for _, _r in _aov_cur.iterrows():
+                    aov_map[(str(_r["city_code"]).strip(),
+                             str(_r["store_name"]).strip(), week)] = float(_r["aov"])
+                print(f"[AOV] {len(aov_map)} store con AOV partner (settimana {_wk_num})")
+        except Exception as _aove:
+            print(f"[AOV] Avviso: download AOV fallito ({_aove})")
+    if not aov_map and _aov_path.exists():
+        _adf = pd.read_csv(_aov_path, dtype=str).fillna("")
+        for _, _r in _adf.iterrows():
+            try:
+                aov_map[(str(_r["city_code"]).strip(),
+                         str(_r["store_name"]).strip(), week)] = float(_r["aov"])
+            except Exception:
+                pass
+        print(f"[AOV] AOV caricato da file locale: {len(aov_map)} store")
+
     # ---- 4. Store matching ----
     print(f"\n[4/5] Store matching Glovo <-> Deliveroo")
     glovo_tuples = [
@@ -468,7 +521,7 @@ def run_pipeline(
     not_on_deliveroo_set -= _matched_keys
     print(f"      Exclusive Glovo: {len(exclusive_glovo_set)} | Non su Deliveroo: {len(not_on_deliveroo_set)} store")
 
-    store_parity = compute_store_parity(glovo_store, deliveroo_df, match_map, exclusive_glovo_set, not_on_deliveroo_set)
+    store_parity = compute_store_parity(glovo_store, deliveroo_df, match_map, exclusive_glovo_set, not_on_deliveroo_set, aov_map=aov_map)
 
     # ---- 5a. Product-parity: dove TUTTI i promo Deliveroo sono nel nostro menu (matchati
     # al 100%, >=3), il verdetto per-prodotto SOSTITUISCE quello store-level. Altrove
@@ -506,7 +559,7 @@ def run_pipeline(
     print(f"      SUPERIORITY={sup}  PARITY={par}  INFERIORITY={inf}  UNMATCHED={unm}  EXCLUSIVE_GLOVO={excl}  NOT_ON_DELIVEROO={nod}")
 
     # ---- 5b. Calcola parity Prime (prime-first) ----
-    store_parity_prime = compute_store_parity(glovo_store_prime, deliveroo_df, match_map, exclusive_glovo_set, not_on_deliveroo_set)
+    store_parity_prime = compute_store_parity(glovo_store_prime, deliveroo_df, match_map, exclusive_glovo_set, not_on_deliveroo_set, aov_map=aov_map)
     store_parity_prime["parity_basis"] = "store"   # il product-parity si applica alla vista standard
     city_parity_prime  = compute_city_parity(store_parity_prime)
 

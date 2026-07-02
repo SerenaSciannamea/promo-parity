@@ -196,6 +196,7 @@ def compute_store_parity(
             "glovo_promo_products": int(row.get("promo_product_count", 0)),
             "revenue":              float(row.get("revenue", 0)),
             "promo_coverage_pct":   float(row.get("promo_coverage_pct", 0)),
+            "glovo_aov":            round(float(aov), 2) if aov else None,
         })
 
     # -----------------------------------------------------------------------
@@ -250,6 +251,7 @@ def compute_store_parity(
                 "glovo_promo_products": 0,
                 "revenue":              0.0,
                 "promo_coverage_pct":   0.0,
+                "glovo_aov":            None,
             })
 
     return pd.DataFrame(rows)
