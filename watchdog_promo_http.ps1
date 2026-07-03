@@ -15,11 +15,29 @@ $STALL_MIN = 5    # output fermo da piu' di questi minuti = stallo/hang (watchdo
 New-Item -ItemType Directory -Force -Path "$proj\data" | Out-Null
 function Log($m) { Add-Content -Path $log -Value ("[{0:yyyy-MM-dd HH:mm:ss}] {1}" -f (Get-Date), $m) -Encoding UTF8 }
 
-$today = Get-Date -Format "yyyy-MM-dd"
+$now   = Get-Date
+$today = $now.ToString("yyyy-MM-dd")
 
-# 1) run di oggi gia' completato?
+# 0) FINESTRA OPERATIVA: il watchdog agisce SOLO durante (e subito dopo) un run
+# schedulato. Lo scraper parte Mar(2)/Ven(5) alle 19:30 e puo' proseguire oltre
+# mezzanotte, quindi la finestra e' [sera del run 19:00] .. [mattina dopo 06:00].
+# Fuori da questa finestra NON si tocca nulla: cosi' un run gia' finito la sera non
+# viene erroneamente "rianimato" dopo mezzanotte quando la data cambia.
+$dow = [int]$now.DayOfWeek   # Dom=0, Lun=1, Mar=2, Mer=3, Gio=4, Ven=5, Sab=6
+if (($dow -eq 2 -or $dow -eq 5) -and $now.Hour -ge 19) {
+    $runDay = $today                              # sera del run (Mar/Ven >= 19:00)
+} elseif (($dow -eq 3 -or $dow -eq 6) -and $now.Hour -lt 6) {
+    $runDay = $now.AddDays(-1).ToString("yyyy-MM-dd")  # notte dopo (Mer/Sab < 06:00)
+} else {
+    Log "Fuori finestra run schedulato (dow=$dow h=$($now.Hour)) -> non intervengo."; return
+}
+
+# 1) run gia' completato? Confronta il marker sia con OGGI sia col giorno-del-run:
+# un run finito a tarda sera scrive il marker con la data di quel giorno, che dopo
+# mezzanotte diventa "ieri" ma coincide comunque con $runDay -> resta uno stand-down.
 if (Test-Path $marker) {
-    if ((Get-Content $marker -Raw).Trim() -eq $today) { Log "Run di $today gia' completato -> nulla da fare."; return }
+    $mk = (Get-Content $marker -Raw).Trim()
+    if ($mk -eq $today -or $mk -eq $runDay) { Log "Run di $runDay gia' completato (marker=$mk) -> nulla da fare."; return }
 }
 
 # 1b) pipeline in corso? Durante la pipeline i file dello scraper NON si aggiornano:
