@@ -27,6 +27,16 @@ from __future__ import annotations
 import pandas as pd
 from pipeline.promo_ranker import rank_deliveroo, parity_label, rank_label, NO_PROMO_RANK, extract_pct_deliveroo, extract_min_basket_deliveroo
 
+# Normalizzazione nomi allineata al matcher: cosi' l'indice Deliveroo e i confronti
+# collassano le varianti di grafia (®, apostrofi curvi ' vs ', doppi spazi, ordine
+# parole, suffissi) che altrimenti fanno mancare l'aggancio tra il nome nel mapping
+# e lo scrape della settimana -> parity falsata + finti "solo Deliveroo".
+try:
+    from pipeline.store_matcher import _normalize as _norm_name
+except Exception:  # fallback minimale se l'import fallisce
+    def _norm_name(s: str) -> str:
+        return str(s or "").strip().lower()
+
 
 # ---------------------------------------------------------------------------
 # Store-level parity
@@ -95,7 +105,7 @@ def compute_store_parity(
             n_tot  = int(pd.to_numeric(r.get("n_stores_total"), errors="coerce") or 0)
             spct   = pd.to_numeric(r.get("stores_pct"), errors="coerce")
             spct   = float(spct) if pd.notna(spct) else (round(100 * n_with / n_tot) if n_tot else 0.0)
-            _deliv_all.setdefault((city, name.lower()), []).append(
+            _deliv_all.setdefault((city, _norm_name(name)), []).append(
                 {"promo": promo, "rank": rk, "pct": pc,
                  "n_with": n_with, "n_tot": n_tot, "stores_pct": spct})
 
@@ -143,7 +153,7 @@ def compute_store_parity(
         if deliveroo_names:
             best = None  # tieni la filiale che da' la parity peggiore per Glovo
             for dn in deliveroo_names:
-                ent     = deliv_index.get((city, dn.lower()))
+                ent     = deliv_index.get((city, _norm_name(dn)))
                 b_promo = ent["promo"] if ent else None
                 b_rank  = ent["rank"] if ent else NO_PROMO_RANK
                 b_pct   = ent["pct"] if ent else 0.0
@@ -210,7 +220,7 @@ def compute_store_parity(
         _names = [dns] if isinstance(dns, str) else (dns or [])
         for dn in _names:
             if dn and str(dn).strip():
-                matched_deliveroo.add((c, str(dn).strip().lower()))
+                matched_deliveroo.add((c, _norm_name(dn)))
     week_nog = ""
     if "week_num" in glovo_store.columns and len(glovo_store):
         _wk = glovo_store["week_num"].dropna()
@@ -225,7 +235,7 @@ def compute_store_parity(
             promo = str(drow.get("promotion_type", "")).strip()
             if not city or not name or not promo:
                 continue
-            key = (city, name.lower())
+            key = (city, _norm_name(name))
             if key in matched_deliveroo or key in seen_nog:
                 continue
             seen_nog.add(key)
