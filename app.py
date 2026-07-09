@@ -1812,6 +1812,19 @@ def tab_store_detail(sel_weeks, sel_cities, prime: bool = False, sel_am=None):
     st.markdown(_store_table_html(disp_html), unsafe_allow_html=True)
     st.caption(f"Totale store visualizzati: {len(disp)}")
 
+    # ---- Download CSV della tabella filtrata ----
+    # Esporta TUTTE le righe attualmente filtrate (non solo le prime _MAX_HTML mostrate).
+    # utf-8-sig per aprire correttamente gli accenti in Excel.
+    _csv_bytes = disp.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "⬇️ Scarica CSV (tabella filtrata)",
+        data=_csv_bytes,
+        file_name=f"store_detail_{pd.Timestamp.now():%Y%m%d_%H%M}.csv",
+        mime="text/csv",
+        key=f"dl_store_detail{_kp}",
+        help=f"Esporta tutte le {len(disp)} righe attualmente filtrate (non solo le {_MAX_HTML} mostrate a schermo).",
+    )
+
     # ---- Drill-down su singolo store ----
     st.divider()
     st.subheader("Drill-down store")
