@@ -270,14 +270,13 @@ def read_all(
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    glovo_products       = _read_tab(sheet, TAB_GLOVO_PRODUCTS)   # serve al drill-down prodotti (~140k)
     deliveroo_products   = _read_tab(sheet, TAB_DELIVEROO_PRODUCTS)
     store_parity_prime   = _read_tab(sheet, TAB_STORE_PARITY_PRIME)
     city_parity_prime    = _read_tab(sheet, TAB_CITY_PARITY_PRIME)
-    # NB: i tab prodotti (glovo_products ~140k righe, glovo_products_prime ~400k) NON
-    # vengono caricati all'avvio: facevano superare la memoria (~1GB) di Streamlit
-    # Cloud -> "Error running app". Servono solo al drill-down per-prodotto, che li
-    # carica on-demand (load_glovo_products_ondemand). I tab principali restano leggeri.
-    glovo_products       = pd.DataFrame()
+    # NB: glovo_products_prime (~400k righe) NON viene caricato all'avvio: da solo
+    # faceva superare la memoria (~1GB) di Streamlit Cloud -> "Error running app".
+    # Il drill-down prodotti *Prime* resta vuoto; quello standard funziona.
     glovo_products_prime = pd.DataFrame()
     priority_actions     = _read_tab(sheet, TAB_PRIORITY_ACTIONS)
     pipeline_health      = _read_tab(sheet, TAB_PIPELINE_HEALTH)
