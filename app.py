@@ -473,8 +473,32 @@ def _dedup_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300)
+def _true_promo_label(promo_type: str, fallback: str = "") -> str:
+    """Etichetta REALE della promo Glovo dal tipo di origine (non dal rank, che l'AoV
+    puo' aver 'upgradato' a 2.0 per il solo verdetto): BASKET_PERCENTAGE -> 'Basket %',
+    TWO_FOR_ONE -> '2x1', PERCENTAGE_DISCOUNT -> '% off prodotto'."""
+    t = str(promo_type or "").upper()
+    if "TWO_FOR_ONE" in t:
+        return "2x1"
+    if "BASKET_PERCENTAGE" in t:
+        return "Basket %"
+    if "PERCENTAGE_DISCOUNT" in t:
+        return "% off prodotto"
+    return fallback
+
+
 def load_store_parity() -> pd.DataFrame:
-    return _dedup_columns(_cloud_store_parity() if _is_cloud_mode() else _local_store_parity())
+    df = _dedup_columns(_cloud_store_parity() if _is_cloud_mode() else _local_store_parity())
+    # Ripristina l'etichetta promo REALE per il display (Basket %/2x1/…): l'AoV-upgrade
+    # cambia il rank a 2.0 solo per il VERDETTO, ma il tipo vero resta in glovo_promo_type.
+    # Senza questo, una basket con soglia sotto AoV appariva "% off prodotto" + conteggio
+    # prodotti invece di "Basket %" + "Full menu". Non tocca la colonna 'parity'.
+    if "glovo_promo_type" in df.columns and "glovo_rank_label" in df.columns:
+        df["glovo_rank_label"] = [
+            _true_promo_label(t, f)
+            for t, f in zip(df["glovo_promo_type"], df["glovo_rank_label"])
+        ]
+    return df
 
 
 @st.cache_data(ttl=300)
