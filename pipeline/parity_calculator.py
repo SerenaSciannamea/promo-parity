@@ -49,11 +49,39 @@ _PARITY_SEVERITY = {"INFERIORITY": 0, "PARITY": 1, "SUPERIORITY": 2}
 
 def _aov_upgrade(rank: float, min_basket: float, aov: float | None) -> float:
     """Promo a minimum-basket (rank 3.0) -> trattala come % semplice (rank 2.0) quando
-    la soglia NON e' una barriera secondo l'AOV del partner: AOV <= soglia + 1 euro
-    (AOV sotto la soglia, o la supera di al massimo 1 euro)."""
-    if rank == 3.0 and min_basket and aov is not None and aov <= min_basket + 1.0:
+    la soglia NON e' una barriera, cioe' quando lo scontrino medio del partner (AOV)
+    la SUPERA gia': AOV >= soglia - 1 euro. In quel caso quasi ogni ordine qualifica,
+    quindi la promo vale come uno sconto % effettivo. Se invece l'AOV e' sotto la
+    soglia (barriera reale) resta rank 3.0."""
+    if rank == 3.0 and min_basket and aov is not None and aov >= min_basket - 1.0:
         return 2.0
     return rank
+
+
+def _scope_glovo(promo_type: str) -> str:
+    """Ampiezza della promo Glovo: 'full' = tutto l'ordine/menu, 'selected' = pochi
+    articoli, '' = ignoto. BASKET_PERCENTAGE sconta l'intero ordine -> 'full';
+    TWO_FOR_ONE si applica a piatti specifici -> 'selected'; % off -> ignoto."""
+    t = (promo_type or "").strip().upper()
+    if t == "BASKET_PERCENTAGE":
+        return "full"
+    if t == "TWO_FOR_ONE":
+        return "selected"
+    return ""
+
+
+def _scope_deliveroo(promo_text: str) -> str:
+    """Ampiezza della promo Deliveroo dal testo: 'articoli selezionati' -> 'selected';
+    sconto sull'intero ordine ('spendi'/'risparmia'/'ordine' o '% di sconto' senza
+    'selezionati') -> 'full'; altrimenti ''."""
+    s = (promo_text or "").lower()
+    if not s:
+        return ""
+    if "selezionat" in s:
+        return "selected"
+    if "spendi" in s or "risparmia" in s or "ordine" in s or "sconto" in s or "%" in s:
+        return "full"
+    return ""
 
 
 def compute_store_parity(
@@ -127,6 +155,7 @@ def compute_store_parity(
         glovo_pct            = float(row.get("max_pct_off") or row.get("avg_pct_off") or 0)
         glovo_promo_products = int(row.get("promo_product_count") or 0)
         glovo_min_basket     = float(row.get("min_basket_size") or 0)
+        glovo_scope          = _scope_glovo(glovo_type)
 
         # AOV del partner (city, store, week) -> upgrade min-basket a % semplice se non e' barriera
         aov = aov_map.get((city, glovo_nm, week)) if aov_map else None
@@ -159,6 +188,7 @@ def compute_store_parity(
                 b_pct   = ent["pct"] if ent else 0.0
                 b_bask  = extract_min_basket_deliveroo(b_promo) if b_promo else 0.0
                 b_rank  = _aov_upgrade(b_rank, b_bask, aov)   # stessa regola AOV lato Deliveroo
+                b_scope = _scope_deliveroo(b_promo or "")
                 b_par   = parity_label(
                     glovo_rank, b_rank,
                     glovo_pct_off=glovo_pct,
@@ -166,6 +196,9 @@ def compute_store_parity(
                     glovo_promo_products=glovo_promo_products,
                     glovo_min_basket=glovo_min_basket,
                     deliveroo_min_basket=b_bask,
+                    aov=aov,
+                    glovo_scope=glovo_scope,
+                    deliveroo_scope=b_scope,
                 )
                 # ordina: peggior parity (INFERIORITY<PARITY<SUPERIORITY), poi promo
                 # Deliveroo piu' forte (rank minore, pct maggiore)

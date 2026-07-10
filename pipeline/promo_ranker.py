@@ -141,6 +141,9 @@ def parity_label(
     glovo_promo_products: int = 0,
     glovo_min_basket: float = 0.0,
     deliveroo_min_basket: float = 0.0,
+    aov: float | None = None,
+    glovo_scope: str = "",
+    deliveroo_scope: str = "",
 ) -> str:
     """
     Restituisce 'SUPERIORITY', 'PARITY' o 'INFERIORITY' dal punto di vista Glovo.
@@ -160,7 +163,20 @@ def parity_label(
     extract_pct_deliveroo che restituisce gia' il max dal testo Deliveroo.
 
     Quando entrambi sono senza promo (rank 6) -> PARITY.
+
+    scope ("full" = tutto l'ordine/menu, "selected" = pochi articoli, "" = ignoto)
+    e aov permettono le regole:
+      - Tempering 2x1: Glovo 2x1 su pochi articoli vs Deliveroo % ampio senza barriera
+        (soglia gia' superata dall'AoV) -> PARITY (le due forze si compensano).
+      - A parita' di %: full-menu batte "articoli selezionati" -> SUPERIORITY.
     """
+    # Tempering 2x1 vs % ampio-senza-barriera (es. 2x1 su 2 piatti vs 30% su tutto il menu):
+    # la meccanica piu' forte di Glovo (rank 1.0) e l'ampiezza+non-barriera di Deliveroo
+    # (rank 2.0 = % effettivo) si compensano -> PARITY invece di SUPERIORITY.
+    if (glovo_rank == 1.0 and deliveroo_rank == 2.0
+            and glovo_scope == "selected" and deliveroo_scope == "full"):
+        return "PARITY"
+
     if glovo_rank < deliveroo_rank:
         return "SUPERIORITY"
     elif glovo_rank > deliveroo_rank:
@@ -174,7 +190,13 @@ def parity_label(
             elif diff <= -PCT_SUPERIORITY_THRESHOLD:
                 return "INFERIORITY"
             else:
-                # % MAX sostanzialmente uguale: tiebreaker sul numero di prodotti in promo.
+                # % MAX sostanzialmente uguale: decide l'AMPIEZZA. Un 30% su TUTTO
+                # il menu batte un 30% su "articoli selezionati" (es. Roadhouse).
+                if glovo_scope == "full" and deliveroo_scope == "selected":
+                    return "SUPERIORITY"
+                if deliveroo_scope == "full" and glovo_scope == "selected":
+                    return "INFERIORITY"
+                # Nessuna asimmetria d'ampiezza: tiebreaker storico sul numero di prodotti.
                 if glovo_promo_products >= PCT_PROMO_PRODUCTS_MIN:
                     return "SUPERIORITY"
 

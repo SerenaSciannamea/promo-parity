@@ -539,6 +539,11 @@ def run_pipeline(
 
             def _apply_pp(row):
                 pv = _pv.get((str(row["city_code"]).strip(), str(row["glovo_name"]).strip()))
+                # Le promo basket (BASKET_PERCENTAGE) sono sconti sull'INTERO ordine:
+                # il confronto per-prodotto non ha senso -> resta lo store-level (che
+                # ora gestisce AoV+ampiezza). Evita override incoerenti sui basket.
+                if str(row.get("glovo_promo_type", "")).strip().upper() == "BASKET_PERCENTAGE":
+                    return pd.Series([row["parity"], "store"])
                 if pv and row["parity"] in _STRUCT:
                     return pd.Series([pv, "product"])
                 return pd.Series([row["parity"], "store"])
