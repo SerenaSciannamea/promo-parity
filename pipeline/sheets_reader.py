@@ -274,7 +274,10 @@ def read_all(
     deliveroo_products   = _read_tab(sheet, TAB_DELIVEROO_PRODUCTS)
     store_parity_prime   = _read_tab(sheet, TAB_STORE_PARITY_PRIME)
     city_parity_prime    = _read_tab(sheet, TAB_CITY_PARITY_PRIME)
-    glovo_products_prime = _read_tab(sheet, TAB_GLOVO_PRODUCTS_PRIME)
+    # NB: glovo_products_prime NON viene caricato all'avvio: e' enorme (~150k righe
+    # per settimana) e faceva andare l'app in OOM su Streamlit Cloud (~1GB). Il
+    # drill-down prodotti Prime resta vuoto finche' non lo si carica on-demand.
+    glovo_products_prime = pd.DataFrame()
     priority_actions     = _read_tab(sheet, TAB_PRIORITY_ACTIONS)
     pipeline_health      = _read_tab(sheet, TAB_PIPELINE_HEALTH)
     am_mapping           = _read_tab(sheet, TAB_AM_MAPPING)
